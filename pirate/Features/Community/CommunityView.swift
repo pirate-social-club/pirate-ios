@@ -1,0 +1,1396 @@
+import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
+
+private enum CommunityReadMode {
+    case authenticated
+    case publicRead
+}
+
+private enum CommunityGateStatus {
+    case unknown
+    case met
+    case unmet
+}
+
+private struct CommunitySidebarGateItem: Identifiable {
+    let gateType: String
+    let label: String
+    let provider: String?
+    let status: CommunityGateStatus
+
+    var id: String { "\(gateType)-\(label)" }
+}
+
+private let isoAlpha3ToAlpha2: [String: String] = Dictionary(
+    uniqueKeysWithValues: "AF:AFG,AL:ALB,DZ:DZA,AS:ASM,AD:AND,AO:AGO,AI:AIA,AQ:ATA,AG:ATG,AR:ARG,AM:ARM,AW:ABW,AU:AUS,AT:AUT,AZ:AZE,BS:BHS,BH:BHR,BD:BGD,BB:BRB,BY:BLR,BE:BEL,BZ:BLZ,BJ:BEN,BM:BMU,BT:BTN,BO:BOL,BA:BIH,BW:BWA,BV:BVT,BR:BRA,IO:IOT,BN:BRN,BG:BGR,BF:BFA,BI:BDI,KH:KHM,CM:CMR,CA:CAN,CV:CPV,KY:CYM,CF:CAF,TD:TCD,CL:CHL,CN:CHN,CX:CXR,CC:CCK,CO:COL,KM:COM,CG:COG,CD:COD,CK:COK,CR:CRI,CI:CIV,HR:HRV,CU:CUB,CY:CYP,CZ:CZE,DK:DNK,DJ:DJI,DM:DMA,DO:DOM,EC:ECU,EG:EGY,SV:SLV,GQ:GNQ,ER:ERI,EE:EST,ET:ETH,FK:FLK,FO:FRO,FJ:FJI,FI:FIN,FR:FRA,GF:GUF,PF:PYF,TF:ATF,GA:GAB,GM:GMB,GE:GEO,DE:DEU,GH:GHA,GI:GIB,GR:GRC,GL:GRL,GD:GRD,GP:GLP,GU:GUM,GT:GTM,GN:GIN,GW:GNB,GY:GUY,HT:HTI,HM:HMD,VA:VAT,HN:HND,HK:HKG,HU:HUN,IS:ISL,IN:IND,ID:IDN,IR:IRN,IQ:IRQ,IE:IRL,IL:ISR,IT:ITA,JM:JAM,JP:JPN,JO:JOR,KZ:KAZ,KE:KEN,KI:KIR,KP:PRK,KR:KOR,KW:KWT,KG:KGZ,LA:LAO,LV:LVA,LB:LBN,LS:LSO,LR:LBR,LY:LBY,LI:LIE,LT:LTU,LU:LUX,MO:MAC,MG:MDG,MW:MWI,MY:MYS,MV:MDV,ML:MLI,MT:MLT,MH:MHL,MQ:MTQ,MR:MRT,MU:MUS,YT:MYT,MX:MEX,FM:FSM,MD:MDA,MC:MCO,MN:MNG,MS:MSR,MA:MAR,MZ:MOZ,MM:MMR,NA:NAM,NR:NRU,NP:NPL,NL:NLD,NC:NCL,NZ:NZL,NI:NIC,NE:NER,NG:NGA,NU:NIU,NF:NFK,MP:MNP,MK:MKD,NO:NOR,OM:OMN,PK:PAK,PW:PLW,PS:PSE,PA:PAN,PG:PNG,PY:PRY,PE:PER,PH:PHL,PN:PCN,PL:POL,PT:PRT,PR:PRI,QA:QAT,RE:REU,RO:ROU,RU:RUS,RW:RWA,SH:SHN,KN:KNA,LC:LCA,PM:SPM,VC:VCT,WS:WSM,SM:SMR,ST:STP,SA:SAU,SN:SEN,SC:SYC,SL:SLE,SG:SGP,SK:SVK,SI:SVN,SB:SLB,SO:SOM,ZA:ZAF,GS:SGS,ES:ESP,LK:LKA,SD:SDN,SR:SUR,SJ:SJM,SZ:SWZ,SE:SWE,CH:CHE,SY:SYR,TW:TWN,TJ:TJK,TZ:TZA,TH:THA,TL:TLS,TG:TGO,TK:TKL,TO:TON,TT:TTO,TN:TUN,TR:TUR,TM:TKM,TC:TCA,TV:TUV,UG:UGA,UA:UKR,AE:ARE,GB:GBR,US:USA,UM:UMI,UY:URY,UZ:UZB,VU:VUT,VE:VEN,VN:VNM,VG:VGB,VI:VIR,WF:WLF,EH:ESH,YE:YEM,ZM:ZMB,ZW:ZWE,AX:ALA,BQ:BES,CW:CUW,GG:GGY,IM:IMN,JE:JEY,ME:MNE,BL:BLM,MF:MAF,RS:SRB,SX:SXM,SS:SSD,XK:XKK"
+        .split(separator: ",")
+        .compactMap { pair -> (String, String)? in
+            let parts = pair.split(separator: ":")
+            guard parts.count == 2 else { return nil }
+            return (String(parts[1]), String(parts[0]))
+        }
+)
+
+struct CommunityView: View {
+    @Environment(\.pirateColors) private var colors
+    @Environment(\.pirateRadii) private var radii
+    var sessionManager: SessionManager
+
+    let communityId: String
+
+    @State private var communityPreview: CommunityPreview?
+    @State private var posts: [LocalizedPostResponse] = []
+    @State private var nextCursor: String?
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+    @State private var actionError: String?
+    @State private var isJoining = false
+    @State private var showSignIn = false
+    @State private var votingPostIds: Set<String> = []
+    @State private var sortMode = "best"
+    @State private var activeTab = "feed"
+    @State private var isLoadingMore = false
+    @State private var paginationError: String?
+    @State private var joinEligibility: JoinEligibility?
+    @State private var readMode: CommunityReadMode = .publicRead
+
+    private var resolvedCommunityId: String {
+        communityPreview?.community.id ?? communityId
+    }
+
+    private var viewportWidth: CGFloat {
+        #if os(iOS)
+        return max(UIScreen.main.bounds.width, 320)
+        #else
+        return 390
+        #endif
+    }
+
+    private var pageContentWidth: CGFloat {
+        max(viewportWidth - PirateTokens.pageGutter * 2, 0)
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                if let community = communityPreview {
+                    communityHeader(community)
+                    communityTabs
+                    if let actionError {
+                        inlineError(actionError)
+                    }
+                    if activeTab == "feed" {
+                        if let paginationError {
+                            inlineError(paginationError)
+                        }
+                        postsList
+                    } else {
+                        aboutSections(community)
+                    }
+                } else if isLoading {
+                    LoadingView()
+                } else if let error = errorMessage {
+                    ErrorView(message: error, retry: loadCommunity)
+                }
+            }
+            .frame(width: viewportWidth, alignment: .topLeading)
+        }
+        .scrollIndicators(.hidden)
+        .background(colors.bgPage)
+        .navigationTitle("")
+        .inlineNavigationBarTitle()
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                NavigationLink(value: PirateRoute.composePost(resolvedCommunityId)) {
+                    PirateIconView(icon: .plus, size: 21, color: colors.textPrimary)
+                }
+                if activeTab == "feed" {
+                    sortMenu
+                }
+            }
+        }
+        .task {
+            await loadCommunity()
+        }
+        .sheet(isPresented: $showSignIn) {
+            SignInDrawer(sessionManager: sessionManager, isPresented: $showSignIn)
+        }
+    }
+
+    private func communityHeader(_ preview: CommunityPreview) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Group {
+                if let url = ApiClient.shared.publicMediaURL(from: preview.community.bannerRef) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().scaledToFill()
+                        default:
+                            Rectangle().fill(colors.bgElevated)
+                        }
+                    }
+                } else {
+                    LinearGradient(
+                        colors: [colors.bgElevated, colors.surfaceSubtle],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                }
+            }
+            .frame(width: pageContentWidth, height: 144)
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: radii.x2l))
+            .overlay(RoundedRectangle(cornerRadius: radii.x2l).stroke(colors.borderSoft, lineWidth: 1))
+            .padding(.horizontal, PirateTokens.pageGutter)
+
+            VStack(alignment: .leading, spacing: 12) {
+                AvatarView(avatarRef: preview.community.avatarRef, size: 72, fallbackLabel: preview.community.displayName)
+                    .padding(.top, -36)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(preview.community.displayName)
+                        .font(PirateTokens.Typography.h2)
+                        .foregroundStyle(colors.textPrimary)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text(routeLabel(for: preview.community))
+                        .font(PirateTokens.Typography.body)
+                        .foregroundStyle(colors.textSecondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let description = preview.community.description, !description.isEmpty {
+                    Text(description)
+                        .font(PirateTokens.Typography.body)
+                        .foregroundStyle(colors.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                HStack(spacing: 16) {
+                    if let memberCount = preview.community.memberCount {
+                        communityMeta("\(memberCount) members")
+                    }
+                    if let followerCount = preview.community.followerCount {
+                        communityMeta("\(followerCount) followers")
+                    }
+                }
+
+                if let eligibilityText = eligibilityText {
+                    Text(eligibilityText)
+                        .font(PirateTokens.Typography.small)
+                        .foregroundStyle(colors.textSecondary)
+                }
+
+                communityHeaderActions(preview)
+            }
+            .frame(width: pageContentWidth, alignment: .leading)
+            .padding(.horizontal, PirateTokens.pageGutter)
+            .padding(.bottom, 18)
+        }
+        .frame(width: viewportWidth, alignment: .leading)
+    }
+
+    private func communityMeta(_ text: String) -> some View {
+        Text(text)
+            .font(PirateTokens.Typography.smallStrong)
+            .foregroundStyle(colors.textSecondary)
+    }
+
+    private func communityHeaderActions(_ preview: CommunityPreview) -> some View {
+        HStack(spacing: 12) {
+            followButton(preview)
+                .frame(maxWidth: .infinity)
+            joinButton(preview)
+                .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 2)
+    }
+
+    private func followButton(_ preview: CommunityPreview) -> some View {
+        Button {
+            if !sessionManager.isAuthenticated {
+                showSignIn = true
+                return
+            }
+            Task { await toggleFollow() }
+        } label: {
+            communityActionPill(
+                title: preview.viewerFollowing == true ? "Following" : "Follow",
+                tone: preview.viewerFollowing == true ? .secondary : .primary
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func joinButton(_ preview: CommunityPreview) -> some View {
+        let status = joinEligibility?.status ?? preview.viewerMembershipStatus
+        if status == "already_joined" || status == "member" {
+            communityActionPill(title: "Joined", tone: .secondary)
+        } else if (status == "verification_required" || status == "gate_failed"), let route = verificationRoute(for: joinEligibility) {
+            NavigationLink(value: route) {
+                communityActionPill(title: joinButtonTitle(for: status), tone: .secondary)
+            }
+            .buttonStyle(.plain)
+        } else {
+            Button {
+                if !sessionManager.isAuthenticated {
+                    showSignIn = true
+                    return
+                }
+                Task { await joinCommunity() }
+            } label: {
+                communityActionPill(title: joinButtonTitle(for: status), tone: .secondary, loading: isJoining)
+            }
+            .buttonStyle(.plain)
+            .disabled(isJoining)
+        }
+    }
+
+    private enum CommunityActionTone {
+        case primary
+        case secondary
+    }
+
+    private func communityActionPill(title: String, tone: CommunityActionTone, loading: Bool = false) -> some View {
+        HStack(spacing: 8) {
+            if loading {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(tone == .primary ? colors.textOnAccent : colors.accentBrand)
+            }
+            Text(title)
+                .font(PirateTokens.Typography.bodyStrong)
+                .lineLimit(1)
+                .minimumScaleFactor(0.88)
+        }
+        .foregroundStyle(tone == .primary ? colors.textOnAccent : colors.textPrimary)
+        .padding(.horizontal, 18)
+        .frame(maxWidth: .infinity)
+        .frame(height: 44)
+        .background(tone == .primary ? colors.accentBrand : colors.surfaceSubtle, in: RoundedRectangle(cornerRadius: radii.full))
+        .overlay(RoundedRectangle(cornerRadius: radii.full).stroke(colors.borderSoft, lineWidth: 1))
+    }
+
+    private var communityTabs: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                tabButton(title: "Feed", value: "feed")
+                tabButton(title: "About", value: "about")
+            }
+            .padding(.horizontal, PirateTokens.pageGutter)
+            Rectangle()
+                .fill(colors.borderSoft)
+                .frame(height: 0.5)
+                .padding(.horizontal, PirateTokens.pageGutter)
+        }
+    }
+
+    private func tabButton(title: String, value: String) -> some View {
+        Button {
+            activeTab = value
+        } label: {
+            VStack(spacing: 12) {
+                Text(title)
+                    .font(PirateTokens.Typography.bodyStrong)
+                    .foregroundStyle(activeTab == value ? colors.textPrimary : colors.textSecondary)
+                Rectangle()
+                    .fill(activeTab == value ? colors.accentDanger : Color.clear)
+                    .frame(height: 2)
+            }
+            .padding(.top, 12)
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            sortMenuButton("Best", value: "best")
+            sortMenuButton("New", value: "new")
+            sortMenuButton("Top", value: "top")
+        } label: {
+            PirateIconView(icon: .slidersHorizontal, size: 22, color: colors.textPrimary)
+        }
+        .accessibilityLabel("Sort feed")
+    }
+
+    private func sortMenuButton(_ title: String, value: String) -> some View {
+        Button {
+            changeSort(value)
+        } label: {
+            Text(title)
+        }
+        .disabled(sortMode == value)
+    }
+
+    private var postsList: some View {
+        LazyVStack(spacing: 0) {
+            if posts.isEmpty && !isLoading {
+                Text("No posts yet.")
+                    .font(PirateTokens.Typography.body)
+                    .foregroundStyle(colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, PirateTokens.pageGutter)
+                    .padding(.vertical, 18)
+            } else {
+                ForEach(posts) { localizedPost in
+                    postRow(localizedPost)
+                    Divider()
+                        .overlay(colors.borderSoft)
+                        .padding(.horizontal, PirateTokens.pageGutter)
+                }
+            }
+
+            if isLoading && !posts.isEmpty {
+                ProgressView()
+                    .tint(colors.accentBrand)
+                    .padding()
+            }
+
+            if let nextCursor {
+                loadMoreButton(nextCursor: nextCursor)
+            }
+        }
+    }
+
+    private func postRow(_ post: LocalizedPostResponse) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            postAuthorHeader(post.post)
+
+            NavigationLink(value: PirateRoute.post(post.id)) {
+                postPreviewContent(post)
+            }
+            .buttonStyle(.plain)
+
+            HStack(spacing: 10) {
+                VotePill(
+                    score: postScore(post),
+                    voteValue: post.viewerVote,
+                    disabled: votingPostIds.contains(post.post.id),
+                    onVote: { value in
+                        Task { await voteOnPost(postId: post.post.id, value: value) }
+                    }
+                )
+
+                CommentCountPill(count: post.commentCount ?? post.post.commentCount ?? 0)
+
+                Spacer()
+            }
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, PirateTokens.pageGutter)
+        .padding(.vertical, 14)
+    }
+
+    @ViewBuilder
+    private func postAuthorHeader(_ post: Post) -> some View {
+        if let route = authorProfileRoute(for: post) {
+            NavigationLink(value: route) {
+                postAuthorHeaderContent(post)
+            }
+            .buttonStyle(.plain)
+        } else {
+            postAuthorHeaderContent(post)
+        }
+    }
+
+    private func postAuthorHeaderContent(_ post: Post) -> some View {
+        HStack(spacing: 10) {
+            AvatarView(
+                avatarRef: post.authorAvatarRef,
+                size: 38,
+                fallbackLabel: authorLabel(for: post),
+                fallbackSeed: post.authorUserId ?? authorLabel(for: post)
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(authorLabel(for: post))
+                    .font(PirateTokens.Typography.smallStrong)
+                    .foregroundStyle(colors.textPrimary)
+                    .lineLimit(1)
+
+                Text(postMetaLine(for: post))
+                    .font(PirateTokens.Typography.small)
+                    .foregroundStyle(colors.textSecondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .accessibilityLabel("View \(authorLabel(for: post)) profile")
+    }
+
+    private func postPreviewContent(_ post: LocalizedPostResponse) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let title = postTitle(post) {
+                Text(title)
+                    .font(PirateTokens.Typography.bodyStrong)
+                    .foregroundStyle(colors.textPrimary)
+                    .lineLimit(3)
+            }
+
+            if let body = postBody(post), !body.isEmpty, body != postTitle(post) {
+                Text(body)
+                    .font(PirateTokens.Typography.body)
+                    .foregroundStyle(colors.textPrimary)
+                    .lineLimit(5)
+            }
+
+            let mediaItem = PiratePostMediaItem.primary(for: post.post)
+            if mediaItem != nil {
+                PostMediaView(post: post.post, context: .feed)
+            }
+
+            if post.post.linkUrl != nil {
+                PostLinkPreview(post: post.post, compact: true, showsPreviewImage: mediaItem == nil)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    private func inlineError(_ message: String) -> some View {
+        Text(message)
+            .font(PirateTokens.Typography.caption)
+            .foregroundStyle(colors.accentDanger)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, PirateTokens.pageGutter)
+            .padding(.vertical, 8)
+    }
+
+    private func aboutSections(_ preview: CommunityPreview) -> some View {
+        let description = preview.community.description?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let gates = sidebarGateItems(preview)
+        let links = activeReferenceLinks(preview)
+        let rules = activeRules(preview)
+        let flairs = activeFlairs(preview)
+        let hasStats = preview.community.followerCount != nil || preview.community.memberCount != nil
+        let charity = communityCharity(preview)
+        let hasDetails = (description?.isEmpty == false)
+            || hasStats
+            || preview.owner != nil
+            || !preview.moderators.isEmpty
+            || charity != nil
+            || !gates.isEmpty
+            || !links.isEmpty
+            || !rules.isEmpty
+            || !flairs.isEmpty
+
+        return VStack(alignment: .leading, spacing: 22) {
+            if let description, !description.isEmpty {
+                aboutDetailSection(title: "About") {
+                    Text(description)
+                        .font(PirateTokens.Typography.caption)
+                        .foregroundStyle(colors.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if hasStats {
+                aboutStatsGrid(preview)
+            }
+
+            if let owner = preview.owner {
+                aboutDetailSection(title: "Owner") {
+                    roleHolderRow(owner)
+                }
+            }
+
+            if !preview.moderators.isEmpty {
+                aboutDetailSection(title: "Moderators") {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(preview.moderators) { moderator in
+                            roleHolderRow(moderator)
+                        }
+                    }
+                }
+            }
+
+            if let charity {
+                aboutDetailSection(title: "Charity") {
+                    charityRow(charity)
+                }
+            }
+
+            if !gates.isEmpty {
+                aboutDetailSection(title: "Access gates") {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(gates.indices, id: \.self) { index in
+                            gateRow(gates[index], showsDivider: index < gates.count - 1)
+                        }
+                    }
+                }
+            }
+
+            if !links.isEmpty {
+                aboutDetailSection(title: "Links") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(links.indices, id: \.self) { index in
+                            aboutLinkRow(links[index])
+                        }
+                    }
+                }
+            }
+
+            if !rules.isEmpty {
+                aboutDetailSection(title: "Rules") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(rules.indices, id: \.self) { index in
+                            aboutRuleRow(rule: rules[index], index: index)
+                        }
+                    }
+                }
+            }
+
+            if !flairs.isEmpty {
+                aboutDetailSection(title: "Tags") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(flairs) { flair in
+                            flairRow(flair)
+                        }
+                    }
+                }
+            }
+
+            if !hasDetails {
+                Text("No community details yet.")
+                    .font(PirateTokens.Typography.body)
+                    .foregroundStyle(colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, PirateTokens.pageGutter)
+        .padding(.vertical, 16)
+    }
+
+    private func aboutStatsGrid(_ preview: CommunityPreview) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            if let followerCount = preview.community.followerCount {
+                aboutStat(value: compactCount(followerCount), label: "Followers")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let memberCount = preview.community.memberCount {
+                aboutStat(value: compactCount(memberCount), label: "Citizens")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func aboutStat(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(value)
+                .font(PirateTokens.Typography.h3)
+                .foregroundStyle(colors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(label)
+                .font(PirateTokens.Typography.caption)
+                .foregroundStyle(colors.textSecondary)
+        }
+    }
+
+    @ViewBuilder
+    private func roleHolderRow(_ holder: CommunityRoleHolder) -> some View {
+        if let route = roleHolderProfileRoute(holder) {
+            NavigationLink(value: route) {
+                roleHolderRowContent(holder)
+            }
+            .buttonStyle(.plain)
+        } else {
+            roleHolderRowContent(holder)
+        }
+    }
+
+    private func roleHolderRowContent(_ holder: CommunityRoleHolder) -> some View {
+        HStack(spacing: 10) {
+            AvatarView(
+                avatarRef: holder.avatarRef,
+                size: 36,
+                fallbackLabel: roleHolderName(holder),
+                fallbackSeed: holder.user
+            )
+
+            Text(roleHolderDisplayLabel(holder))
+                .font(PirateTokens.Typography.bodyStrong)
+                .foregroundStyle(colors.textPrimary)
+                .lineLimit(1)
+
+            Spacer(minLength: 10)
+
+            if let country = holder.nationalityBadgeCountry, !country.isEmpty {
+                Text(country.uppercased())
+                    .font(PirateTokens.Typography.smallStrong)
+                    .foregroundStyle(colors.textSecondary)
+            }
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .accessibilityLabel("View \(roleHolderDisplayLabel(holder)) profile")
+    }
+
+    private func charityRow(_ partner: CommunityDonationPartner) -> some View {
+        let content = HStack(spacing: 10) {
+            AvatarView(avatarRef: partner.imageURL, size: 36, fallbackLabel: partner.displayName)
+            Text(partner.displayName ?? "Charity partner")
+                .font(PirateTokens.Typography.bodyStrong)
+                .foregroundStyle(colors.textPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 10)
+            PirateIconView(icon: .caretRight, size: 18, color: colors.textSecondary)
+        }
+        .padding(.vertical, 4)
+
+        return Group {
+            if let ref = partner.providerPartnerRef,
+               let url = URL(string: "https://app.endaoment.org/orgs/\(ref)") {
+                Link(destination: url) { content }
+            } else {
+                content
+            }
+        }
+    }
+
+    private func gateRow(_ item: CommunitySidebarGateItem, showsDivider: Bool = true) -> some View {
+        HStack(spacing: 12) {
+            PirateIconView(icon: gateIcon(for: item), size: 20, color: colors.textSecondary)
+                .frame(width: 36, height: 36)
+
+            Text(item.label)
+                .font(PirateTokens.Typography.bodyStrong)
+                .foregroundStyle(colors.textPrimary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 8)
+
+            gateStatusIcon(item.status)
+        }
+        .frame(minHeight: 44)
+        .padding(.vertical, 3)
+        .overlay(alignment: .bottom) {
+            if showsDivider {
+                Rectangle()
+                    .fill(colors.borderSoft.opacity(0.7))
+                    .frame(height: 0.5)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func gateStatusIcon(_ status: CommunityGateStatus) -> some View {
+        switch status {
+        case .met:
+            ZStack {
+                Circle().fill(colors.accentBrand)
+                PirateIconView(icon: .check, size: 12, color: colors.textOnAccent)
+            }
+            .frame(width: 20, height: 20)
+        case .unknown, .unmet:
+            Circle()
+                .stroke(colors.textSecondary.opacity(0.75), lineWidth: 1.6)
+                .frame(width: 20, height: 20)
+        }
+    }
+
+    private func flairRow(_ flair: CommunityFlairDefinition) -> some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(colors.surfaceSubtle)
+                .overlay(Circle().stroke(colors.borderSoft, lineWidth: 1))
+                .frame(width: 12, height: 12)
+            Text(flair.label ?? "Tag")
+                .font(PirateTokens.Typography.bodyStrong)
+                .foregroundStyle(colors.textPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 10)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func aboutDetailSection<Content: View>(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            aboutSectionLabel(title)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func aboutSectionLabel(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(PirateTokens.Typography.smallStrong)
+            .foregroundStyle(colors.textSecondary)
+    }
+
+    private func aboutLinkRow(_ link: CommunityReferenceLink) -> some View {
+        Group {
+            if let urlString = link.url, let url = URL(string: urlString) {
+                Link(destination: url) {
+                    aboutLinkContent(link)
+                }
+            } else {
+                aboutLinkContent(link)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func aboutLinkContent(_ link: CommunityReferenceLink) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(referenceLinkLabel(link))
+                    .font(PirateTokens.Typography.bodyStrong)
+                    .foregroundStyle(colors.textPrimary)
+                    .lineLimit(1)
+                if let url = link.url, !url.isEmpty {
+                    Text(url)
+                        .font(PirateTokens.Typography.small)
+                        .foregroundStyle(colors.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 12)
+            if link.verified == true {
+                PirateIconView(icon: .check, size: 18, color: colors.accentBrand)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func aboutRuleRow(rule: CommunityRule, index: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 10) {
+                Text("\(index + 1)")
+                    .font(PirateTokens.Typography.caption)
+                    .foregroundStyle(colors.textSecondary)
+                    .frame(width: 18, alignment: .leading)
+                Text(rule.title)
+                    .font(PirateTokens.Typography.caption)
+                    .foregroundStyle(colors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let body = rule.body, !body.isEmpty {
+                Text(body)
+                    .font(PirateTokens.Typography.small)
+                    .foregroundStyle(colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 28)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func activeRules(_ preview: CommunityPreview) -> [CommunityRule] {
+        (preview.rules ?? [])
+            .filter { isActiveStatus($0.status) }
+            .sorted { ($0.position ?? Int.max) < ($1.position ?? Int.max) }
+    }
+
+    private func activeReferenceLinks(_ preview: CommunityPreview) -> [CommunityReferenceLink] {
+        (preview.referenceLinks ?? [])
+            .filter { isActiveStatus($0.linkStatus) }
+            .sorted { ($0.position ?? Int.max) < ($1.position ?? Int.max) }
+    }
+
+    private func activeFlairs(_ preview: CommunityPreview) -> [CommunityFlairDefinition] {
+        guard preview.flairPolicy?.flairEnabled == true else { return [] }
+        return preview.flairPolicy?.definitions
+            .filter { isActiveStatus($0.status) }
+            .sorted { ($0.position ?? Int.max) < ($1.position ?? Int.max) } ?? []
+    }
+
+    private func isActiveStatus(_ status: String?) -> Bool {
+        guard let status else { return true }
+        return status == "active"
+    }
+
+    private func compactCount(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            return String(format: "%.1fM", Double(count) / 1_000_000)
+        }
+        if count >= 1_000 {
+            return String(format: "%.1fK", Double(count) / 1_000)
+        }
+        return "\(count)"
+    }
+
+    private func referenceLinkLabel(_ link: CommunityReferenceLink) -> String {
+        link.label ?? link.metadata?.displayName ?? platformLabel(link.platform) ?? "Link"
+    }
+
+    private func platformLabel(_ platform: String?) -> String? {
+        guard let platform else { return nil }
+        switch platform {
+        case "apple_music":
+            return "Apple Music"
+        case "official_website":
+            return "Website"
+        case "musicbrainz":
+            return "MusicBrainz"
+        case "soundcloud":
+            return "SoundCloud"
+        default:
+            return platform
+                .split(separator: "_")
+                .map { $0.prefix(1).uppercased() + String($0.dropFirst()) }
+                .joined(separator: " ")
+        }
+    }
+
+    private func roleHolderName(_ holder: CommunityRoleHolder) -> String {
+        holder.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            ?? holder.handle?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            ?? holder.user
+    }
+
+    private func roleHolderDisplayLabel(_ holder: CommunityRoleHolder) -> String {
+        roleHolderHandleLabel(holder) ?? roleHolderName(holder)
+    }
+
+    private func roleHolderHandleLabel(_ holder: CommunityRoleHolder) -> String? {
+        guard let handle = holder.handle?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty else {
+            return nil
+        }
+        if handle.lowercased().hasPrefix("u/") {
+            return String(handle.dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        }
+        return handle
+    }
+
+    private func roleHolderProfileRoute(_ holder: CommunityRoleHolder) -> PirateRoute? {
+        if let handle = roleHolderHandleLabel(holder) {
+            return .publicProfile(handle)
+        }
+        guard let userId = holder.user.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty else {
+            return nil
+        }
+        return .user(userId)
+    }
+
+    private func communityCharity(_ preview: CommunityPreview) -> CommunityDonationPartner? {
+        guard preview.donationPolicyMode != "none" else { return nil }
+        return preview.donationPartner
+    }
+
+    private func loadMoreButton(nextCursor: String) -> some View {
+        Button {
+            Task { await loadMore(cursor: nextCursor) }
+        } label: {
+            HStack {
+                if isLoadingMore {
+                    ProgressView().tint(colors.accentBrand)
+                }
+                Text(isLoadingMore ? "Loading..." : "Load more")
+                    .font(PirateTokens.Typography.bodyStrong)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .foregroundStyle(colors.accentBrand)
+            .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.lg))
+        }
+        .buttonStyle(.plain)
+        .disabled(isLoadingMore)
+        .padding(.horizontal, PirateTokens.pageGutter)
+        .padding(.vertical, 12)
+    }
+
+    private func loadCommunity() async {
+        isLoading = true
+        errorMessage = nil
+        actionError = nil
+        paginationError = nil
+        do {
+            let loaded = try await loadCommunityPreview()
+            let preview = loaded.preview
+            readMode = loaded.readMode
+            communityPreview = preview
+            let resolvedCommunityId = preview.community.id
+            joinEligibility = sessionManager.isAuthenticated
+                ? try? await ApiClient.shared.joinEligibility(communityId: resolvedCommunityId)
+                : nil
+
+            do {
+                let loadedPosts = try await loadCommunityPosts(
+                    communityId: resolvedCommunityId,
+                    readMode: loaded.readMode
+                )
+                posts = loadedPosts.response.items
+                nextCursor = loadedPosts.response.nextCursor
+                readMode = loadedPosts.readMode
+            } catch let error as ApiError {
+                posts = []
+                nextCursor = nil
+                paginationError = error.displayMessage
+            } catch {
+                posts = []
+                nextCursor = nil
+                paginationError = error.localizedDescription
+            }
+        } catch let error as ApiError {
+            errorMessage = error.displayMessage
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func loadCommunityPreview() async throws -> (preview: CommunityPreview, readMode: CommunityReadMode) {
+        if sessionManager.isAuthenticated {
+            do {
+                return (try await ApiClient.shared.community(id: communityId), .authenticated)
+            } catch let error as ApiError where error.isAuthError || error.isNotFound || error.isForbidden {
+                return (try await ApiClient.shared.publicCommunity(id: communityId), .publicRead)
+            }
+        }
+
+        return (try await ApiClient.shared.publicCommunity(id: communityId), .publicRead)
+    }
+
+    private func loadCommunityPosts(
+        communityId: String,
+        cursor: String? = nil,
+        readMode requestedReadMode: CommunityReadMode
+    ) async throws -> (response: PostListResponse, readMode: CommunityReadMode) {
+        if sessionManager.isAuthenticated && requestedReadMode == .authenticated {
+            do {
+                let response = try await ApiClient.shared.communityPosts(
+                    communityId: communityId,
+                    cursor: cursor,
+                    sort: sortMode,
+                    limit: 25
+                )
+                return (response, .authenticated)
+            } catch let error as ApiError where error.isAuthError || error.isNotFound || error.isForbidden {
+                let response = try await ApiClient.shared.publicCommunityPosts(
+                    communityId: communityId,
+                    cursor: cursor,
+                    sort: sortMode,
+                    limit: 25
+                )
+                return (response, .publicRead)
+            }
+        }
+
+        let response = try await ApiClient.shared.publicCommunityPosts(
+            communityId: communityId,
+            cursor: cursor,
+            sort: sortMode,
+            limit: 25
+        )
+        return (response, .publicRead)
+    }
+
+    private func loadMore(cursor: String) async {
+        guard !isLoadingMore else { return }
+        isLoadingMore = true
+        paginationError = nil
+        do {
+            let resolvedCommunityId = communityPreview?.community.id ?? communityId
+            let loadedPosts = try await loadCommunityPosts(
+                communityId: resolvedCommunityId,
+                cursor: cursor,
+                readMode: readMode
+            )
+            let response = loadedPosts.response
+            readMode = loadedPosts.readMode
+            let existingIds = Set(posts.map { $0.id })
+            posts.append(contentsOf: response.items.filter { !existingIds.contains($0.id) })
+            nextCursor = response.nextCursor
+        } catch let error as ApiError {
+            paginationError = error.displayMessage
+        } catch {
+            paginationError = error.localizedDescription
+        }
+        isLoadingMore = false
+    }
+
+    private func changeSort(_ sort: String) {
+        guard sort != sortMode else { return }
+        sortMode = sort
+        Task { await loadCommunity() }
+    }
+
+    private func joinCommunity() async {
+        isJoining = true
+        actionError = nil
+        do {
+            _ = try await ApiClient.shared.joinCommunity(communityId: resolvedCommunityId)
+            await loadCommunity()
+        } catch let error as ApiError {
+            actionError = error.displayMessage
+        } catch {
+            actionError = error.localizedDescription
+        }
+        isJoining = false
+    }
+
+    private func toggleFollow() async {
+        guard sessionManager.isAuthenticated else {
+            showSignIn = true
+            return
+        }
+        guard let preview = communityPreview else { return }
+        actionError = nil
+        do {
+            if preview.viewerFollowing == true {
+                _ = try await ApiClient.shared.unfollowCommunity(communityId: resolvedCommunityId)
+            } else {
+                _ = try await ApiClient.shared.followCommunity(communityId: resolvedCommunityId)
+            }
+            await loadCommunity()
+        } catch let error as ApiError {
+            actionError = error.displayMessage
+        } catch {
+            actionError = error.localizedDescription
+        }
+    }
+
+    private func voteOnPost(postId: String, value: Int) async {
+        guard sessionManager.isAuthenticated else {
+            showSignIn = true
+            return
+        }
+        guard !votingPostIds.contains(postId) else { return }
+        votingPostIds.insert(postId)
+        actionError = nil
+        do {
+            _ = try await ApiClient.shared.votePost(id: postId, value: value)
+            await loadCommunity()
+        } catch let error as ApiError {
+            actionError = error.displayMessage
+        } catch {
+            actionError = error.localizedDescription
+        }
+        votingPostIds.remove(postId)
+    }
+
+    private func postScore(_ post: LocalizedPostResponse) -> Int {
+        let upvotes = post.upvoteCount ?? post.post.upvoteCount ?? 0
+        let downvotes = post.downvoteCount ?? post.post.downvoteCount ?? 0
+        return upvotes - downvotes
+    }
+
+    private var eligibilityText: String? {
+        guard let status = joinEligibility?.status else { return nil }
+        switch status {
+        case "already_joined":
+            return "You are a member."
+        case "joinable":
+            return "Join to post and reply here."
+        case "requestable":
+            return "Membership requires a request."
+        case "verification_required":
+            let provider = joinEligibility?.suggestedVerificationProvider ?? joinEligibility?.humanVerificationLane ?? "verification"
+            return "Verification required with \(provider)."
+        case "pending_request":
+            return "Your join request is pending."
+        case "gate_failed":
+            return joinEligibility?.failureReason ?? "You do not meet this community's gate."
+        case "banned":
+            return "You cannot join this community."
+        default:
+            return status.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
+    private func joinButtonTitle(for status: String?) -> String {
+        switch status {
+        case "requestable":
+            return "Request to join"
+        case "verification_required":
+            switch verificationProvider(for: joinEligibility) {
+            case "very":
+                return "Verify with Very"
+            case "self":
+                return "Verify with ID"
+            default:
+                return "Verify to join"
+            }
+        case "gate_failed":
+            switch verificationProvider(for: joinEligibility) {
+            case "very":
+                return "Verify with Very"
+            case "self":
+                return "Verify with ID"
+            default:
+                return "Not eligible"
+            }
+        default:
+            return "Join"
+        }
+    }
+
+    private func verificationProvider(for eligibility: JoinEligibility?) -> String? {
+        let provider = eligibility?.suggestedVerificationProvider ?? eligibility?.humanVerificationLane
+        guard let normalized = provider?.lowercased() else { return nil }
+        if normalized.contains("very") { return "very" }
+        if normalized.contains("self") { return "self" }
+        return normalized
+    }
+
+    private func verificationRoute(for eligibility: JoinEligibility?) -> PirateRoute? {
+        switch verificationProvider(for: eligibility) {
+        case "very":
+            return .verificationVery
+        case "self":
+            return .verificationSelf(eligibility?.suggestedVerificationIntent ?? "community_join")
+        default:
+            return nil
+        }
+    }
+
+    private func routeLabel(for community: Community) -> String {
+        formatCommunityRouteLabel(communityId: community.communityId, routeSlug: community.routeSlug)
+    }
+
+    private func postTitle(_ post: LocalizedPostResponse) -> String? {
+        post.translatedTitle ?? post.post.title ?? post.post.caption
+    }
+
+    private func postBody(_ post: LocalizedPostResponse) -> String? {
+        post.translatedBody ?? post.post.body
+    }
+
+    private func authorLabel(for post: Post) -> String {
+        post.authorAnonymousLabel
+            ?? post.authorDisplayName
+            ?? post.authorUserId.map { "\($0.prefix(16)).pirate" }
+            ?? "anonymous"
+    }
+
+    private func authorProfileRoute(for post: Post) -> PirateRoute? {
+        guard post.authorAnonymousLabel == nil else { return nil }
+        guard let userId = post.authorUserId?.trimmingCharacters(in: .whitespacesAndNewlines), !userId.isEmpty else {
+            return nil
+        }
+        return .user(userId)
+    }
+
+    private func postMetaLine(for post: Post) -> String {
+        let time = post.createdAt.map(relativeTime) ?? ""
+        return time.isEmpty ? "just now" : time
+    }
+
+    private func relativeTime(from isoString: String) -> String {
+        let date: Date?
+        if let epoch = Double(isoString), epoch > 0 {
+            date = Date(timeIntervalSince1970: epoch)
+        } else {
+            date = ISO8601DateFormatter().date(from: isoString)
+        }
+        guard let date else { return "" }
+        let interval = Date().timeIntervalSince(date)
+        if interval < 60 { return "just now" }
+        if interval < 3600 { return "\(Int(interval / 60))m" }
+        if interval < 86400 { return "\(Int(interval / 3600))h" }
+        if interval < 2592000 { return "\(Int(interval / 86400))d" }
+        return "\(Int(interval / 2592000))mo"
+    }
+
+    private func sidebarGateItems(_ preview: CommunityPreview) -> [CommunitySidebarGateItem] {
+        var seenLabels = Set<String>()
+        let summaries = joinEligibility?.membershipGateSummaries ?? preview.membershipGateSummaries ?? []
+
+        return summaries.compactMap { gate in
+            let gateType = normalizedGateType(gate.gateType)
+            let label = sidebarGateLabel(gate)
+            guard !seenLabels.contains(label) else { return nil }
+            seenLabels.insert(label)
+            return CommunitySidebarGateItem(
+                gateType: gateType,
+                label: label,
+                provider: gateProvider(gate),
+                status: gateStatus(for: gateType)
+            )
+        }
+    }
+
+    private func sidebarGateLabel(_ gate: MembershipGateSummary) -> String {
+        let gateType = normalizedGateType(gate.gateType)
+        let values = gateValues(gate)
+
+        switch gateType {
+        case "nationality":
+            if values.isEmpty {
+                return "Nationality verification"
+            }
+            let countries = values.map(countryDisplayName).joined(separator: ", ")
+            return "\(countries) nationality"
+        case "excluded_nationality":
+            let countries = (gate.excludedValues ?? []).map(countryDisplayName).joined(separator: ", ")
+            return countries.isEmpty ? "Excluded nationality configured" : "Excluded nationality: \(countries)"
+        case "gender":
+            return values.first.map { "Document sex marker \($0)" } ?? "Document sex marker"
+        case "age_over_18":
+            return "18+"
+        case "minimum_age":
+            let age = gate.requiredMinimumAge.map(String.init) ?? gate.requiredValue ?? "18"
+            return "\(age)+"
+        case "unique_human":
+            let providers = gate.acceptedProviders ?? []
+            if providers.count == 1, providers.first == "very" {
+                return "Palm scan"
+            }
+            if providers.count == 1, providers.first == "self" {
+                return "Private ID proof"
+            }
+            return "Human proof"
+        case "altcha_pow":
+            return "Proof of work"
+        case "wallet_score":
+            if let score = gate.minimumScore {
+                return "Passport score \(formatGateScore(score))+"
+            }
+            return "Passport score"
+        case "erc721_holding":
+            if let address = gate.contractAddress, !address.isEmpty {
+                return "Ethereum NFT from \(shortAddress(address))"
+            }
+            return "Ethereum NFT holder"
+        case "erc721_inventory_match":
+            let quantity = gate.minQuantity ?? 1
+            return "\(quantity) Courtyard \(inventoryAssetLabel(gate))"
+        default:
+            return humanizedGateType(gate.gateType ?? "Requirement")
+        }
+    }
+
+    private func gateValues(_ gate: MembershipGateSummary) -> [String] {
+        if let values = gate.requiredValues, !values.isEmpty {
+            return values
+        }
+        if let value = gate.requiredValue, !value.isEmpty {
+            return [value]
+        }
+        return []
+    }
+
+    private func countryDisplayName(_ value: String) -> String {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let regionCode = isoAlpha3ToAlpha2[normalized] ?? normalized
+        return Locale.current.localizedString(forRegionCode: regionCode) ?? normalized
+    }
+
+    private func gateProvider(_ gate: MembershipGateSummary) -> String? {
+        guard let providers = gate.acceptedProviders, providers.count == 1 else { return nil }
+        let provider = providers[0]
+        return ["self", "very", "passport"].contains(provider) ? provider : nil
+    }
+
+    private func normalizedGateType(_ gateType: String?) -> String {
+        switch gateType {
+        case "self_nationality":
+            return "nationality"
+        case "self_excluded_nationality":
+            return "excluded_nationality"
+        case "self_gender":
+            return "gender"
+        case "self_minimum_age":
+            return "minimum_age"
+        case "passport_score":
+            return "wallet_score"
+        case "wallet_nft":
+            return "erc721_holding"
+        case "courtyard_inventory":
+            return "erc721_inventory_match"
+        default:
+            return gateType ?? "requirement"
+        }
+    }
+
+    private func gateStatus(for gateType: String) -> CommunityGateStatus {
+        guard let eligibility = joinEligibility else { return .unknown }
+        switch eligibility.status {
+        case "joinable", "already_joined", "requestable", "pending_request":
+            return .met
+        case "verification_required", "gate_failed":
+            guard let capability = gateCapability(for: gateType) else { return .unknown }
+            let missing = Set((eligibility.missingCapabilities ?? []).map(normalizedCapability))
+            return missing.contains(capability) ? .unmet : .met
+        default:
+            return .unknown
+        }
+    }
+
+    private func gateCapability(for gateType: String) -> String? {
+        switch gateType {
+        case "unique_human", "age_over_18", "minimum_age", "nationality", "gender", "wallet_score", "altcha_pow", "erc721_holding", "erc721_inventory_match":
+            return gateType
+        default:
+            return nil
+        }
+    }
+
+    private func normalizedCapability(_ capability: String) -> String {
+        let lowercased = capability.lowercased()
+        if lowercased.contains("nationality") { return "nationality" }
+        if lowercased.contains("gender") { return "gender" }
+        if lowercased.contains("minimum_age") { return "minimum_age" }
+        if lowercased.contains("age_over_18") { return "age_over_18" }
+        if lowercased.contains("unique_human") { return "unique_human" }
+        if lowercased.contains("wallet_score") || lowercased.contains("passport_score") { return "wallet_score" }
+        if lowercased.contains("altcha") { return "altcha_pow" }
+        if lowercased.contains("inventory") { return "erc721_inventory_match" }
+        if lowercased.contains("nft") || lowercased.contains("erc721") { return "erc721_holding" }
+        return lowercased
+    }
+
+    private func gateIcon(for item: CommunitySidebarGateItem) -> PirateIcon {
+        switch item.gateType {
+        case "nationality":
+            return .flag
+        case "unique_human", "gender":
+            return .userCircle
+        case "wallet_score":
+            return .trendUp
+        case "erc721_holding", "erc721_inventory_match":
+            return .wallet
+        case "altcha_pow":
+            return .sparkle
+        case "age_over_18", "minimum_age":
+            return .article
+        default:
+            return .check
+        }
+    }
+
+    private func formatGateScore(_ score: Double) -> String {
+        score.rounded() == score ? String(format: "%.0f", score) : String(score)
+    }
+
+    private func shortAddress(_ address: String) -> String {
+        guard address.count > 10 else { return address }
+        return "\(address.prefix(6))...\(address.suffix(4))"
+    }
+
+    private func inventoryAssetLabel(_ gate: MembershipGateSummary) -> String {
+        if let label = gate.assetFilterLabel?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+            return label
+        }
+        let plural = (gate.minQuantity ?? 1) != 1
+        if gate.assetCategory == "watch" {
+            return plural ? "watches" : "watch"
+        }
+        return plural ? "cards" : "card"
+    }
+
+    private func humanizedGateType(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + String($0.dropFirst()) }
+            .joined(separator: " ")
+    }
+}

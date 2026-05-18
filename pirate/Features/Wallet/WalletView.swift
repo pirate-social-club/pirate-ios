@@ -110,6 +110,7 @@ struct WalletView: View {
         AuthGate(isAuthenticated: sessionManager.isAuthenticated, sessionManager: sessionManager) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    MobilePageHeader("Wallet")
                     balanceSection
                     royaltiesSection
                     assetsSection
@@ -117,7 +118,7 @@ struct WalletView: View {
                 .padding(.bottom, 24)
             }
             .background(colors.bgPage)
-            .navigationTitle("Wallet")
+            .hiddenRootNavigationBar()
             .task(id: sessionManager.currentSession?.accessToken) {
                 await refreshClaimableRoyalties()
             }
