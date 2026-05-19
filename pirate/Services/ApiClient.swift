@@ -2,7 +2,7 @@ import Foundation
 
 enum ApiError: Error {
     case networkError(NetworkError)
-    case serverError(statusCode: Int, message: String, code: String?, retryable: Bool)
+    case serverError(statusCode: Int, message: String, code: String?, retryable: Bool, details: JSONValue? = nil)
     case decodingError(String)
     case unauthorized(String)
     case unknown(String)
@@ -11,7 +11,7 @@ enum ApiError: Error {
         switch self {
         case .networkError:
             return "Unable to connect. Please check your internet connection."
-        case .serverError(_, let message, let code, _):
+        case .serverError(_, let message, let code, _, _):
             if code == "auth_error" { return "Sign in to continue." }
             if code == "internal_error" { return "Something went wrong. Please try again." }
             return message
@@ -26,7 +26,7 @@ enum ApiError: Error {
 
     var diagnosticMessage: String {
         switch self {
-        case .serverError(let statusCode, let message, let code, _):
+        case .serverError(let statusCode, let message, let code, _, _):
             let codeLabel = code ?? "unknown"
             if message == displayMessage {
                 return "\(message) (HTTP \(statusCode), \(codeLabel))"
@@ -44,24 +44,35 @@ enum ApiError: Error {
     }
 
     var isAuthError: Bool {
-        if case .serverError(_, _, let code, _) = self, code == "auth_error" { return true }
+        if case .serverError(_, _, let code, _, _) = self, code == "auth_error" { return true }
         if case .unauthorized = self { return true }
         return false
     }
 
     var isNotFound: Bool {
-        if case .serverError(let statusCode, _, _, _) = self, statusCode == 404 { return true }
+        if case .serverError(let statusCode, _, _, _, _) = self, statusCode == 404 { return true }
         return false
     }
 
     var isForbidden: Bool {
-        if case .serverError(let statusCode, _, _, _) = self, statusCode == 403 { return true }
+        if case .serverError(let statusCode, _, _, _, _) = self, statusCode == 403 { return true }
         return false
     }
 
     var isRetryable: Bool {
-        if case .serverError(_, _, _, let retryable) = self { return retryable }
+        if case .serverError(_, _, _, let retryable, _) = self { return retryable }
         return false
+    }
+
+    var code: String? {
+        if case .serverError(_, _, let code, _, _) = self { return code }
+        if case .unauthorized = self { return "auth_error" }
+        return nil
+    }
+
+    var details: JSONValue? {
+        if case .serverError(_, _, _, _, let details) = self { return details }
+        return nil
     }
 }
 
@@ -74,6 +85,8 @@ enum NetworkError: Error {
 enum HTTPMethod: String {
     case GET, POST, PUT, DELETE, PATCH
 }
+
+private let altchaHeaderName = "x-pirate-altcha"
 
 final class ApiClient {
     static let shared = ApiClient()
@@ -120,6 +133,11 @@ final class ApiClient {
         self.accessToken = token
     }
 
+    func authorizationHeaders() -> [String: String]? {
+        guard let accessToken else { return nil }
+        return ["Authorization": "Bearer \(accessToken)"]
+    }
+
     private func makeURL(path: String, queryItems: [URLQueryItem]? = nil) -> URL {
         var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         components.queryItems = queryItems?.isEmpty == true ? nil : queryItems
@@ -138,13 +156,17 @@ final class ApiClient {
         body: Data? = nil,
         queryItems: [URLQueryItem]? = nil,
         requireAuth: Bool = true,
-        contentType: String? = "application/json"
+        contentType: String? = "application/json",
+        headers: [String: String]? = nil
     ) -> URLRequest {
         let url = makeURL(path: path, queryItems: queryItems)
         var request = URLRequest(url: url)
         request.httpMethod = method.rawValue
         if let contentType {
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        }
+        headers?.forEach { key, value in
+            request.setValue(value, forHTTPHeaderField: key)
         }
 
         if requireAuth, let token = accessToken {
@@ -158,8 +180,8 @@ final class ApiClient {
         return request
     }
 
-    func request<T: Decodable>(path: String, method: HTTPMethod = .GET, body: Data? = nil, queryItems: [URLQueryItem]? = nil, requireAuth: Bool = true) async throws -> T {
-        let request = makeRequest(path: path, method: method, body: body, queryItems: queryItems, requireAuth: requireAuth)
+    func request<T: Decodable>(path: String, method: HTTPMethod = .GET, body: Data? = nil, queryItems: [URLQueryItem]? = nil, requireAuth: Bool = true, headers: [String: String]? = nil) async throws -> T {
+        let request = makeRequest(path: path, method: method, body: body, queryItems: queryItems, requireAuth: requireAuth, headers: headers)
 
         let (data, response): (Data, URLResponse)
         do {
@@ -188,7 +210,8 @@ final class ApiClient {
                     statusCode: httpResponse.statusCode,
                     message: errorResponse.message ?? errorResponse.displayMessage,
                     code: errorResponse.code,
-                    retryable: errorResponse.retryable ?? false
+                    retryable: errorResponse.retryable ?? false,
+                    details: errorResponse.details
                 )
             }
             throw ApiError.serverError(
@@ -211,19 +234,19 @@ final class ApiClient {
         }
     }
 
-    func requestOptionalAuth<T: Decodable>(path: String, method: HTTPMethod = .GET, body: Data? = nil, queryItems: [URLQueryItem]? = nil) async throws -> T {
+    func requestOptionalAuth<T: Decodable>(path: String, method: HTTPMethod = .GET, body: Data? = nil, queryItems: [URLQueryItem]? = nil, headers: [String: String]? = nil) async throws -> T {
         do {
-            return try await request(path: path, method: method, body: body, queryItems: queryItems, requireAuth: true)
+            return try await request(path: path, method: method, body: body, queryItems: queryItems, requireAuth: true, headers: headers)
         } catch let error as ApiError {
             if error.isAuthError {
-                return try await request(path: path, method: method, body: body, queryItems: queryItems, requireAuth: false)
+                return try await request(path: path, method: method, body: body, queryItems: queryItems, requireAuth: false, headers: headers)
             }
             throw error
         }
     }
 
-    func requestVoid(path: String, method: HTTPMethod = .POST, body: Data? = nil, queryItems: [URLQueryItem]? = nil, requireAuth: Bool = true) async throws {
-        let request = makeRequest(path: path, method: method, body: body, queryItems: queryItems, requireAuth: requireAuth)
+    func requestVoid(path: String, method: HTTPMethod = .POST, body: Data? = nil, queryItems: [URLQueryItem]? = nil, requireAuth: Bool = true, headers: [String: String]? = nil) async throws {
+        let request = makeRequest(path: path, method: method, body: body, queryItems: queryItems, requireAuth: requireAuth, headers: headers)
 
         let (data, response): (Data, URLResponse)
         do {
@@ -249,7 +272,8 @@ final class ApiClient {
                     statusCode: httpResponse.statusCode,
                     message: errorResponse.message ?? errorResponse.displayMessage,
                     code: errorResponse.code,
-                    retryable: errorResponse.retryable ?? false
+                    retryable: errorResponse.retryable ?? false,
+                    details: errorResponse.details
                 )
             }
             throw ApiError.serverError(
@@ -263,6 +287,13 @@ final class ApiClient {
 
     private func encode<T: Encodable>(_ value: T) -> Data? {
         try? jsonEncoder.encode(value)
+    }
+
+    private func altchaHeaders(_ payload: String?) -> [String: String]? {
+        guard let payload = payload?.trimmingCharacters(in: .whitespacesAndNewlines), !payload.isEmpty else {
+            return nil
+        }
+        return [altchaHeaderName: payload]
     }
 
     private static func describeDecodingError(_ error: Error) -> String {
@@ -401,8 +432,13 @@ extension ApiClient {
         return try await request(path: "/public-communities/\(pathSegment(communityId))/posts", queryItems: items.isEmpty ? nil : items, requireAuth: false)
     }
 
-    func joinCommunity(communityId: String) async throws -> CommunityJoinResponse {
-        return try await request(path: "/communities/\(pathSegment(communityId))/join", method: .POST, body: encode(EmptyBody()))
+    func joinCommunity(communityId: String, altchaPayload: String? = nil) async throws -> CommunityJoinResponse {
+        return try await request(
+            path: "/communities/\(pathSegment(communityId))/join",
+            method: .POST,
+            body: encode(EmptyBody()),
+            headers: altchaHeaders(altchaPayload)
+        )
     }
 
     func followCommunity(communityId: String) async throws -> CommunityFollowResponse {
@@ -475,6 +511,18 @@ extension ApiClient {
             requireAuth: false
         )
     }
+
+    func communityListings(communityId: String) async throws -> CommunityListingListResponse {
+        return try await request(path: "/communities/\(pathSegment(communityId))/listings")
+    }
+
+    func communityPurchases(communityId: String) async throws -> CommunityPurchaseListResponse {
+        return try await request(path: "/communities/\(pathSegment(communityId))/purchases")
+    }
+
+    func communityAssetContentURL(communityId: String, assetId: String) -> URL {
+        makeURL(path: "/communities/\(pathSegment(communityId))/assets/\(pathSegment(assetId))/content")
+    }
 }
 
 // MARK: - Posts
@@ -495,12 +543,22 @@ extension ApiClient {
         return try await request(path: "/public-posts/\(pathSegment(id))", requireAuth: false)
     }
 
-    func votePost(id: String, value: Int) async throws -> PostVoteResponse {
-        return try await request(path: "/posts/\(pathSegment(id))/vote", method: .POST, body: encode(VoteRequest(value: value)))
+    func votePost(id: String, value: Int, altchaPayload: String? = nil) async throws -> PostVoteResponse {
+        return try await request(
+            path: "/posts/\(pathSegment(id))/vote",
+            method: .POST,
+            body: encode(VoteRequest(value: value)),
+            headers: altchaHeaders(altchaPayload)
+        )
     }
 
-    func createPost(communityId: String, body: CreatePostRequest) async throws -> LocalizedPostResponse {
-        return try await request(path: "/communities/\(pathSegment(communityId))/posts", method: .POST, body: encode(body))
+    func createPost(communityId: String, body: CreatePostRequest, altchaPayload: String? = nil) async throws -> LocalizedPostResponse {
+        return try await request(
+            path: "/communities/\(pathSegment(communityId))/posts",
+            method: .POST,
+            body: encode(body),
+            headers: altchaHeaders(altchaPayload)
+        )
     }
 
     func linkPreview(communityId: String, url: String) async throws -> LinkPreviewResponse {
@@ -534,8 +592,13 @@ extension ApiClient {
         try await requestVoid(path: "/communities/\(pathSegment(communityId))/posts/\(pathSegment(postId))/comments", method: .POST, body: encode(body))
     }
 
-    func voteComment(id: String, value: Int) async throws -> CommentVoteResponse {
-        return try await request(path: "/comments/\(pathSegment(id))/vote", method: .POST, body: encode(VoteRequest(value: value)))
+    func voteComment(id: String, value: Int, altchaPayload: String? = nil) async throws -> CommentVoteResponse {
+        return try await request(
+            path: "/comments/\(pathSegment(id))/vote",
+            method: .POST,
+            body: encode(VoteRequest(value: value)),
+            headers: altchaHeaders(altchaPayload)
+        )
     }
 
     func commentReplies(commentId: String, cursor: String? = nil, sort: String? = nil, limit: Int? = nil) async throws -> CommentListResponse {
@@ -623,7 +686,64 @@ extension ApiClient {
                     statusCode: httpResponse.statusCode,
                     message: errorResponse.message ?? errorResponse.displayMessage,
                     code: errorResponse.code,
-                    retryable: errorResponse.retryable ?? false
+                    retryable: errorResponse.retryable ?? false,
+                    details: errorResponse.details
+                )
+            }
+            throw ApiError.serverError(
+                statusCode: httpResponse.statusCode,
+                message: "Request failed with status \(httpResponse.statusCode)",
+                code: nil,
+                retryable: httpResponse.statusCode >= 500
+            )
+        }
+
+        do {
+            return try jsonDecoder.decode(ProfileMediaUploadResponse.self, from: responseData)
+        } catch {
+            throw ApiError.decodingError(Self.describeDecodingError(error))
+        }
+    }
+
+    func uploadCommunityMedia(kind: String, data: Data, filename: String, mimeType: String) async throws -> ProfileMediaUploadResponse {
+        let boundary = "Boundary-\(UUID().uuidString)"
+        let body = multipartProfileMediaBody(
+            boundary: boundary,
+            kind: kind,
+            data: data,
+            filename: filename,
+            mimeType: mimeType
+        )
+        let request = makeRequest(
+            path: "/community-media",
+            method: .POST,
+            body: body,
+            contentType: "multipart/form-data; boundary=\(boundary)"
+        )
+
+        let (responseData, response): (Data, URLResponse)
+        do {
+            (responseData, response) = try await session.data(for: request)
+        } catch {
+            throw ApiError.networkError(.noConnection)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ApiError.serverError(statusCode: 0, message: "Invalid response", code: nil, retryable: false)
+        }
+
+        if httpResponse.statusCode == 401 {
+            throw ApiError.unauthorized("Session expired")
+        }
+
+        if httpResponse.statusCode >= 400 {
+            if let errorResponse = try? jsonDecoder.decode(ErrorResponse.self, from: responseData) {
+                throw ApiError.serverError(
+                    statusCode: httpResponse.statusCode,
+                    message: errorResponse.message ?? errorResponse.displayMessage,
+                    code: errorResponse.code,
+                    retryable: errorResponse.retryable ?? false,
+                    details: errorResponse.details
                 )
             }
             throw ApiError.serverError(
@@ -728,10 +848,10 @@ extension ApiClient {
         return try await request(path: "/notifications/feed", queryItems: items.isEmpty ? nil : items)
     }
 
-    func markNotificationsRead(itemIds: [String]? = nil) async throws {
+    func markNotificationsRead(eventIds: [String]? = nil) async throws {
         let body: Data?
-        if let itemIds {
-            body = encode(["item_ids": itemIds])
+        if let eventIds {
+            body = encode(["event_ids": eventIds])
         } else {
             body = nil
         }
@@ -756,12 +876,38 @@ extension ApiClient {
 
 // MARK: - Verification
 extension ApiClient {
+    func createAltchaChallenge(scope: String, action: String) async throws -> AltchaChallenge {
+        return try await request(
+            path: "/verification/altcha/challenge",
+            queryItems: [
+                URLQueryItem(name: "scope", value: scope),
+                URLQueryItem(name: "action", value: action)
+            ]
+        )
+    }
+
+    func refreshPassportWalletScore(communityId: String? = nil) async throws -> RefreshPassportWalletScoreResponse {
+        return try await request(
+            path: "/verification/passport-wallet-score",
+            method: .POST,
+            body: encode(RefreshPassportWalletScoreRequest(communityId: communityId))
+        )
+    }
+
     func startVerificationSession(sessionRequest: StartVerificationSessionRequest) async throws -> VerificationSession {
         return try await request(path: "/verification-sessions", method: .POST, body: encode(sessionRequest))
     }
 
     func verificationSession(id: String) async throws -> VerificationSession {
         return try await request(path: "/verification-sessions/\(pathSegment(id))")
+    }
+
+    func completeVerificationSession(id: String, request completeRequest: CompleteVerificationSessionRequest) async throws -> VerificationSession {
+        return try await request(
+            path: "/verification-sessions/\(pathSegment(id))/complete",
+            method: .POST,
+            body: encode(completeRequest)
+        )
     }
 
     func startNamespaceSession(family: String, rootLabel: String) async throws -> NamespaceVerificationSession {

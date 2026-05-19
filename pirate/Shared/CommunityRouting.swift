@@ -13,6 +13,39 @@ func formatCommunityRouteLabel(communityId: String, routeSlug: String? = nil) ->
     return routeSegment.lowercased().hasPrefix("c/") ? routeSegment : "c/\(routeSegment)"
 }
 
+func communityPresentationLabel(
+    communityId: String,
+    displayName: String,
+    routeSlug: String? = nil,
+    namespaceVerificationId: String? = nil,
+    routeSlugImpliesVerified: Bool = false
+) -> String {
+    if isCommunityRouteVerified(
+        routeSlug: routeSlug,
+        namespaceVerificationId: namespaceVerificationId,
+        routeSlugImpliesVerified: routeSlugImpliesVerified
+    ) {
+        return formatCommunityRouteLabel(communityId: communityId, routeSlug: routeSlug)
+    }
+
+    let trimmedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmedDisplayName.isEmpty ? formatCommunityRouteLabel(communityId: communityId, routeSlug: routeSlug) : trimmedDisplayName
+}
+
+func isCommunityRouteVerified(
+    routeSlug: String? = nil,
+    namespaceVerificationId: String? = nil,
+    routeSlugImpliesVerified: Bool = false
+) -> Bool {
+    if let namespaceVerificationId, !namespaceVerificationId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return true
+    }
+    if routeSlugImpliesVerified, let routeSlug, !routeSlug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return true
+    }
+    return false
+}
+
 private func formatCommunityRouteSegment(_ value: String) -> String {
     let trimmedInput = value.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmed = trimmedInput.lowercased().hasPrefix("c/")

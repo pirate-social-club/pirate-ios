@@ -5,6 +5,7 @@ enum PirateRoute: Hashable {
     case onboarding
     case home
     case chat
+    case chatTarget(String)
     case yourCommunities
     case community(String)
     case createCommunity
@@ -23,7 +24,7 @@ enum PirateRoute: Hashable {
     case publicProfile(String)
     case publicProfileByWallet(String)
     case verificationSelf(String)
-    case verificationVery
+    case verificationVery(String)
 
     var path: String {
         switch self {
@@ -31,6 +32,7 @@ enum PirateRoute: Hashable {
         case .onboarding: return "onboarding"
         case .home: return "home"
         case .chat: return "chat"
+        case .chatTarget(let target): return "chat/\(target)"
         case .yourCommunities: return "your_communities"
         case .community(let id): return "community/\(id)"
         case .createCommunity: return "communities/new"
@@ -49,7 +51,7 @@ enum PirateRoute: Hashable {
         case .publicProfile(let handle): return "public-profile/\(handle)"
         case .publicProfileByWallet(let address): return "public-profile/wallet/\(address)"
         case .verificationSelf(let intent): return "verification/self/\(intent)"
-        case .verificationVery: return "verification/very"
+        case .verificationVery(let intent): return "verification/very/\(intent)"
         }
     }
 

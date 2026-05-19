@@ -18,7 +18,7 @@ struct AuthGate<Content: View>: View {
         } else {
             VStack(spacing: 16) {
                 Spacer()
-                Image(systemName: "lock")
+                PirateSystemIconView(systemName: "lock", size: 34)
                     .font(.system(size: 34, weight: .medium))
                     .foregroundStyle(colors.textSecondary)
                 Text("Sign in")

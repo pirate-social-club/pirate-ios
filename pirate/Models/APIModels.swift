@@ -54,6 +54,76 @@ enum JSONValue: Codable, Hashable {
     }
 }
 
+struct AltchaChallenge: Codable {
+    let rawValue: JSONValue
+
+    init(from decoder: Decoder) throws {
+        rawValue = try JSONValue(from: decoder)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try rawValue.encode(to: encoder)
+    }
+
+    func parameters() throws -> AltchaChallengeParameters {
+        guard case .object(let root) = rawValue,
+              case .object(let parameters)? = root["parameters"] else {
+            throw AltchaSolverError.invalidChallenge("ALTCHA challenge is missing parameters.")
+        }
+
+        guard let algorithm = parameters["algorithm"]?.stringValue,
+              let nonce = parameters["nonce"]?.stringValue,
+              let salt = parameters["salt"]?.stringValue,
+              let keyPrefix = parameters["keyPrefix"]?.stringValue,
+              let cost = parameters["cost"]?.intValue,
+              let keyLength = parameters["keyLength"]?.intValue else {
+            throw AltchaSolverError.invalidChallenge("ALTCHA challenge has incomplete parameters.")
+        }
+
+        return AltchaChallengeParameters(
+            algorithm: algorithm,
+            cost: cost,
+            keyLength: keyLength,
+            keyPrefix: keyPrefix,
+            maxNumber: parameters["maxNumber"]?.intValue ?? parameters["max_number"]?.intValue,
+            nonce: nonce,
+            salt: salt
+        )
+    }
+}
+
+struct AltchaChallengeParameters {
+    let algorithm: String
+    let cost: Int
+    let keyLength: Int
+    let keyPrefix: String
+    let maxNumber: Int?
+    let nonce: String
+    let salt: String
+}
+
+struct AltchaSolution: Codable {
+    let counter: Int
+    let derivedKey: String
+    let time: Int
+}
+
+struct AltchaPayloadEnvelope: Codable {
+    let challenge: JSONValue
+    let solution: AltchaSolution
+}
+
+private extension JSONValue {
+    var intValue: Int? {
+        switch self {
+        case .int(let value): return value
+        case .double(let value): return Int(value)
+        case .string(let value): return Int(value)
+        case .bool, .object, .array, .null: return nil
+        }
+    }
+}
+
 extension KeyedDecodingContainer {
     func decodeLossyStringIfPresent(forKey key: Key) -> String? {
         if let value = try? decodeIfPresent(String.self, forKey: key) { return value }
@@ -498,6 +568,7 @@ struct Community: Codable, Identifiable {
         case community
         case displayName = "display_name"
         case routeSlug = "route_slug"
+        case namespaceVerification = "namespace_verification"
         case namespaceVerificationId = "namespace_verification_id"
         case pendingNamespaceVerificationSessionId = "pending_namespace_verification_session_id"
         case description
@@ -573,7 +644,8 @@ struct Community: Codable, Identifiable {
             ?? ""
         self.displayName = container.decodeLossyStringIfPresent(forKey: .displayName) ?? "Community"
         self.routeSlug = container.decodeLossyStringIfPresent(forKey: .routeSlug)
-        self.namespaceVerificationId = container.decodeLossyStringIfPresent(forKey: .namespaceVerificationId)
+        self.namespaceVerificationId = container.decodeLossyStringIfPresent(forKey: .namespaceVerification)
+            ?? container.decodeLossyStringIfPresent(forKey: .namespaceVerificationId)
         self.pendingNamespaceVerificationSessionId = container.decodeLossyStringIfPresent(forKey: .pendingNamespaceVerificationSessionId)
         self.description = container.decodeLossyStringIfPresent(forKey: .description)
         self.membershipMode = container.decodeLossyStringIfPresent(forKey: .membershipMode)
@@ -643,6 +715,7 @@ struct CommunityPreview: Codable {
         case gateRules = "gate_rules"
         case memberCount = "member_count"
         case followerCount = "follower_count"
+        case namespaceVerification = "namespace_verification"
         case namespaceVerificationId = "namespace_verification_id"
         case pendingNamespaceVerificationSessionId = "pending_namespace_verification_session_id"
         case createdAt = "created_at"
@@ -700,7 +773,8 @@ struct CommunityPreview: Codable {
                 communityId: communityId,
                 displayName: container.decodeLossyStringIfPresent(forKey: .displayName) ?? "Community",
                 routeSlug: container.decodeLossyStringIfPresent(forKey: .routeSlug),
-                namespaceVerificationId: container.decodeLossyStringIfPresent(forKey: .namespaceVerificationId),
+                namespaceVerificationId: container.decodeLossyStringIfPresent(forKey: .namespaceVerification)
+                    ?? container.decodeLossyStringIfPresent(forKey: .namespaceVerificationId),
                 pendingNamespaceVerificationSessionId: container.decodeLossyStringIfPresent(forKey: .pendingNamespaceVerificationSessionId),
                 description: container.decodeLossyStringIfPresent(forKey: .description),
                 membershipMode: container.decodeLossyStringIfPresent(forKey: .membershipMode),
@@ -994,6 +1068,7 @@ struct JoinEligibility: Codable {
 
     enum CodingKeys: String, CodingKey {
         case communityId = "community_id"
+        case community
         case membershipMode = "membership_mode"
         case humanVerificationLane = "human_verification_lane"
         case joinableNow = "joinable_now"
@@ -1004,6 +1079,38 @@ struct JoinEligibility: Codable {
         case suggestedVerificationIntent = "suggested_verification_intent"
         case failureReason = "failure_reason"
         case walletScoreStatus = "wallet_score_status"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.communityId = container.decodeLossyStringIfPresent(forKey: .community)
+            ?? container.decodeLossyStringIfPresent(forKey: .communityId)
+            ?? ""
+        self.membershipMode = container.decodeLossyStringIfPresent(forKey: .membershipMode)
+        self.humanVerificationLane = container.decodeLossyStringIfPresent(forKey: .humanVerificationLane)
+        self.joinableNow = container.decodeLossyBoolIfPresent(forKey: .joinableNow)
+        self.status = container.decodeLossyStringIfPresent(forKey: .status)
+        self.membershipGateSummaries = (try? container.decodeIfPresent([MembershipGateSummary].self, forKey: .membershipGateSummaries)) ?? []
+        self.missingCapabilities = (try? container.decodeIfPresent([String].self, forKey: .missingCapabilities)) ?? []
+        self.suggestedVerificationProvider = container.decodeLossyStringIfPresent(forKey: .suggestedVerificationProvider)
+        self.suggestedVerificationIntent = container.decodeLossyStringIfPresent(forKey: .suggestedVerificationIntent)
+        self.failureReason = container.decodeLossyStringIfPresent(forKey: .failureReason)
+        self.walletScoreStatus = try? container.decodeIfPresent(WalletScoreStatus.self, forKey: .walletScoreStatus)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(communityId, forKey: .community)
+        try container.encodeIfPresent(membershipMode, forKey: .membershipMode)
+        try container.encodeIfPresent(humanVerificationLane, forKey: .humanVerificationLane)
+        try container.encodeIfPresent(joinableNow, forKey: .joinableNow)
+        try container.encodeIfPresent(status, forKey: .status)
+        try container.encodeIfPresent(membershipGateSummaries, forKey: .membershipGateSummaries)
+        try container.encodeIfPresent(missingCapabilities, forKey: .missingCapabilities)
+        try container.encodeIfPresent(suggestedVerificationProvider, forKey: .suggestedVerificationProvider)
+        try container.encodeIfPresent(suggestedVerificationIntent, forKey: .suggestedVerificationIntent)
+        try container.encodeIfPresent(failureReason, forKey: .failureReason)
+        try container.encodeIfPresent(walletScoreStatus, forKey: .walletScoreStatus)
     }
 }
 
@@ -1045,8 +1152,18 @@ struct Post: Codable, Identifiable {
     let sourceLanguage: String?
     let translationPolicy: String?
     let accessMode: String?
+    let asset: String?
     let anchorLiveRoom: String?
     let anchorLiveRoomStatus: String?
+    let songArtifactBundle: String?
+    let songTitle: String?
+    let songAnnotationsURL: String?
+    let songMode: String?
+    let rightsBasis: String?
+    let upstreamAssetRefs: [String]?
+    let analysisState: String?
+    let contentSafetyState: String?
+    let ageGatePolicy: String?
     let flairId: String?
     let score: Int?
     let upvoteCount: Int?
@@ -1069,6 +1186,8 @@ struct Post: Codable, Identifiable {
         case linkOgDescription = "link_og_description"
         case linkImage = "link_image"
         case linkOgImage = "link_og_image_url"
+        case linkOgImageLegacy = "link_og_image"
+        case ogImage = "og_image"
         case embeds
         case mediaRefs = "media_refs"
         case postType = "post_type"
@@ -1086,8 +1205,18 @@ struct Post: Codable, Identifiable {
         case sourceLanguage = "source_language"
         case translationPolicy = "translation_policy"
         case accessMode = "access_mode"
+        case asset
         case anchorLiveRoom = "anchor_live_room"
         case anchorLiveRoomStatus = "anchor_live_room_status"
+        case songArtifactBundle = "song_artifact_bundle"
+        case songTitle = "song_title"
+        case songAnnotationsURL = "song_annotations_url"
+        case songMode = "song_mode"
+        case rightsBasis = "rights_basis"
+        case upstreamAssetRefs = "upstream_asset_refs"
+        case analysisState = "analysis_state"
+        case contentSafetyState = "content_safety_state"
+        case ageGatePolicy = "age_gate_policy"
         case flairId = "flair_id"
         case labelId = "label_id"
         case score
@@ -1125,6 +1254,8 @@ struct Post: Codable, Identifiable {
             ?? container.decodeLossyStringIfPresent(forKey: .linkOgDescription)
         self.linkImage = container.decodeLossyStringIfPresent(forKey: .linkImage)
             ?? container.decodeLossyStringIfPresent(forKey: .linkOgImage)
+            ?? container.decodeLossyStringIfPresent(forKey: .linkOgImageLegacy)
+            ?? container.decodeLossyStringIfPresent(forKey: .ogImage)
         self.embeds = try? container.decodeIfPresent([JSONValue].self, forKey: .embeds)
         self.mediaRefs = try? container.decodeIfPresent([MediaRef].self, forKey: .mediaRefs)
         self.postType = container.decodeLossyStringIfPresent(forKey: .postType)
@@ -1143,8 +1274,18 @@ struct Post: Codable, Identifiable {
         self.sourceLanguage = container.decodeLossyStringIfPresent(forKey: .sourceLanguage)
         self.translationPolicy = container.decodeLossyStringIfPresent(forKey: .translationPolicy)
         self.accessMode = container.decodeLossyStringIfPresent(forKey: .accessMode)
+        self.asset = container.decodeLossyStringIfPresent(forKey: .asset)
         self.anchorLiveRoom = container.decodeLossyStringIfPresent(forKey: .anchorLiveRoom)
         self.anchorLiveRoomStatus = container.decodeLossyStringIfPresent(forKey: .anchorLiveRoomStatus)
+        self.songArtifactBundle = container.decodeLossyStringIfPresent(forKey: .songArtifactBundle)
+        self.songTitle = container.decodeLossyStringIfPresent(forKey: .songTitle)
+        self.songAnnotationsURL = container.decodeLossyStringIfPresent(forKey: .songAnnotationsURL)
+        self.songMode = container.decodeLossyStringIfPresent(forKey: .songMode)
+        self.rightsBasis = container.decodeLossyStringIfPresent(forKey: .rightsBasis)
+        self.upstreamAssetRefs = try? container.decodeIfPresent([String].self, forKey: .upstreamAssetRefs)
+        self.analysisState = container.decodeLossyStringIfPresent(forKey: .analysisState)
+        self.contentSafetyState = container.decodeLossyStringIfPresent(forKey: .contentSafetyState)
+        self.ageGatePolicy = container.decodeLossyStringIfPresent(forKey: .ageGatePolicy)
         self.flairId = container.decodeLossyStringIfPresent(forKey: .flairId)
             ?? container.decodeLossyStringIfPresent(forKey: .labelId)
         self.score = container.decodeLossyIntIfPresent(forKey: .score)
@@ -1182,8 +1323,18 @@ struct Post: Codable, Identifiable {
         try container.encodeIfPresent(sourceLanguage, forKey: .sourceLanguage)
         try container.encodeIfPresent(translationPolicy, forKey: .translationPolicy)
         try container.encodeIfPresent(accessMode, forKey: .accessMode)
+        try container.encodeIfPresent(asset, forKey: .asset)
         try container.encodeIfPresent(anchorLiveRoom, forKey: .anchorLiveRoom)
         try container.encodeIfPresent(anchorLiveRoomStatus, forKey: .anchorLiveRoomStatus)
+        try container.encodeIfPresent(songArtifactBundle, forKey: .songArtifactBundle)
+        try container.encodeIfPresent(songTitle, forKey: .songTitle)
+        try container.encodeIfPresent(songAnnotationsURL, forKey: .songAnnotationsURL)
+        try container.encodeIfPresent(songMode, forKey: .songMode)
+        try container.encodeIfPresent(rightsBasis, forKey: .rightsBasis)
+        try container.encodeIfPresent(upstreamAssetRefs, forKey: .upstreamAssetRefs)
+        try container.encodeIfPresent(analysisState, forKey: .analysisState)
+        try container.encodeIfPresent(contentSafetyState, forKey: .contentSafetyState)
+        try container.encodeIfPresent(ageGatePolicy, forKey: .ageGatePolicy)
         try container.encodeIfPresent(flairId, forKey: .flairId)
         try container.encodeIfPresent(score, forKey: .score)
         try container.encodeIfPresent(upvoteCount, forKey: .upvoteCount)
@@ -1437,14 +1588,102 @@ struct LiveRoomViewerRenewRequest: Codable {
     let uid: UInt
 }
 
+struct SongPresentation: Codable {
+    let title: String?
+    let coverArtRef: String?
+    let durationMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case coverArtRef = "cover_art_ref"
+        case durationMs = "duration_ms"
+    }
+}
+
+struct CommunityListingListResponse: Codable {
+    let items: [CommunityListing]
+    let nextCursor: String?
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case nextCursor = "next_cursor"
+    }
+}
+
+struct CommunityListing: Codable, Identifiable {
+    let id: String
+    let object: String?
+    let community: String
+    let asset: String?
+    let liveRoom: String?
+    let listingMode: String?
+    let status: String
+    let priceCents: Int
+    let regionalPricingEnabled: Bool?
+    let donationPartner: String?
+    let donationShareBps: Int?
+    let createdByUser: String?
+    let created: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, object, community, asset, status, created
+        case liveRoom = "live_room"
+        case listingMode = "listing_mode"
+        case priceCents = "price_cents"
+        case regionalPricingEnabled = "regional_pricing_enabled"
+        case donationPartner = "donation_partner"
+        case donationShareBps = "donation_share_bps"
+        case createdByUser = "created_by_user"
+    }
+}
+
+struct CommunityPurchaseListResponse: Codable {
+    let items: [CommunityPurchase]
+    let nextCursor: String?
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case nextCursor = "next_cursor"
+    }
+}
+
+struct CommunityPurchase: Codable, Identifiable {
+    let id: String
+    let object: String?
+    let community: String
+    let listing: String
+    let asset: String?
+    let liveRoom: String?
+    let buyerUser: String?
+    let purchasePriceCents: Int
+    let purchaseEntitlement: String?
+    let entitlementKind: String?
+    let entitlementTargetRef: String?
+    let created: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, object, community, listing, asset, created
+        case liveRoom = "live_room"
+        case buyerUser = "buyer_user"
+        case purchasePriceCents = "purchase_price_cents"
+        case purchaseEntitlement = "purchase_entitlement"
+        case entitlementKind = "entitlement_kind"
+        case entitlementTargetRef = "entitlement_target_ref"
+    }
+}
+
 struct LocalizedPostResponse: Codable, Identifiable {
     let post: Post
     let threadSnapshot: [CommentListItem]?
+    let songPresentation: SongPresentation?
     let commentCount: Int?
     let upvoteCount: Int?
     let downvoteCount: Int?
     let likeCount: Int?
     let viewerVote: Int?
+    let viewerIsAuthor: Bool?
+    let authorCommunityRole: String?
+    let ageGateViewerState: String?
     let locale: String?
     let flair: String?
     let translationState: String?
@@ -1457,11 +1696,15 @@ struct LocalizedPostResponse: Codable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case post
         case threadSnapshot = "thread_snapshot"
+        case songPresentation = "song_presentation"
         case commentCount = "comment_count"
         case upvoteCount = "upvote_count"
         case downvoteCount = "downvote_count"
         case likeCount = "like_count"
         case viewerVote = "viewer_vote"
+        case viewerIsAuthor = "viewer_is_author"
+        case authorCommunityRole = "author_community_role"
+        case ageGateViewerState = "age_gate_viewer_state"
         case locale, flair
         case resolvedLocale = "resolved_locale"
         case translationState = "translation_state"
@@ -1478,11 +1721,15 @@ struct LocalizedPostResponse: Codable, Identifiable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.post = try container.decode(Post.self, forKey: .post)
         self.threadSnapshot = try? container.decodeIfPresent([CommentListItem].self, forKey: .threadSnapshot)
+        self.songPresentation = try? container.decodeIfPresent(SongPresentation.self, forKey: .songPresentation)
         self.commentCount = container.decodeLossyIntIfPresent(forKey: .commentCount)
         self.upvoteCount = container.decodeLossyIntIfPresent(forKey: .upvoteCount)
         self.downvoteCount = container.decodeLossyIntIfPresent(forKey: .downvoteCount)
         self.likeCount = container.decodeLossyIntIfPresent(forKey: .likeCount)
         self.viewerVote = container.decodeLossyIntIfPresent(forKey: .viewerVote)
+        self.viewerIsAuthor = container.decodeLossyBoolIfPresent(forKey: .viewerIsAuthor)
+        self.authorCommunityRole = container.decodeLossyStringIfPresent(forKey: .authorCommunityRole)
+        self.ageGateViewerState = container.decodeLossyStringIfPresent(forKey: .ageGateViewerState)
         self.locale = container.decodeLossyStringIfPresent(forKey: .locale)
             ?? container.decodeLossyStringIfPresent(forKey: .resolvedLocale)
         self.flair = container.decodeLossyStringIfPresent(forKey: .flair)
@@ -1498,11 +1745,15 @@ struct LocalizedPostResponse: Codable, Identifiable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(post, forKey: .post)
         try container.encodeIfPresent(threadSnapshot, forKey: .threadSnapshot)
+        try container.encodeIfPresent(songPresentation, forKey: .songPresentation)
         try container.encodeIfPresent(commentCount, forKey: .commentCount)
         try container.encodeIfPresent(upvoteCount, forKey: .upvoteCount)
         try container.encodeIfPresent(downvoteCount, forKey: .downvoteCount)
         try container.encodeIfPresent(likeCount, forKey: .likeCount)
         try container.encodeIfPresent(viewerVote, forKey: .viewerVote)
+        try container.encodeIfPresent(viewerIsAuthor, forKey: .viewerIsAuthor)
+        try container.encodeIfPresent(authorCommunityRole, forKey: .authorCommunityRole)
+        try container.encodeIfPresent(ageGateViewerState, forKey: .ageGateViewerState)
         try container.encodeIfPresent(locale, forKey: .locale)
         try container.encodeIfPresent(flair, forKey: .flair)
         try container.encodeIfPresent(translationState, forKey: .translationState)
@@ -1876,9 +2127,10 @@ struct ErrorResponse: Codable {
     let code: String?
     let message: String?
     let retryable: Bool?
+    let details: JSONValue?
 
     enum CodingKeys: String, CodingKey {
-        case code, message, retryable
+        case code, message, retryable, details
     }
 
     var displayMessage: String {
@@ -2229,6 +2481,7 @@ struct CreatePostRequest: Codable {
     let caption: String?
     let postType: String?
     let linkUrl: String?
+    let mediaRefs: [MediaRef]?
     let ageGatePolicy: String?
     let flairId: String?
     let identityMode: String?
@@ -2242,6 +2495,7 @@ struct CreatePostRequest: Codable {
         case title, body, caption
         case postType = "post_type"
         case linkUrl = "link_url"
+        case mediaRefs = "media_refs"
         case ageGatePolicy = "age_gate_policy"
         case flairId = "flair_id"
         case identityMode = "identity_mode"
@@ -2258,6 +2512,7 @@ struct CreatePostRequest: Codable {
         caption: String? = nil,
         postType: String? = nil,
         linkUrl: String? = nil,
+        mediaRefs: [MediaRef]? = nil,
         ageGatePolicy: String? = nil,
         flairId: String? = nil,
         identityMode: String? = nil,
@@ -2272,6 +2527,7 @@ struct CreatePostRequest: Codable {
         self.caption = caption
         self.postType = postType
         self.linkUrl = linkUrl
+        self.mediaRefs = mediaRefs
         self.ageGatePolicy = ageGatePolicy
         self.flairId = flairId
         self.identityMode = identityMode
@@ -2332,12 +2588,47 @@ struct CommunityJoinResponse: Codable {
 
     enum CodingKeys: String, CodingKey {
         case communityId = "community_id"
+        case community
         case status
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.communityId = container.decodeLossyStringIfPresent(forKey: .community)
+            ?? container.decodeLossyStringIfPresent(forKey: .communityId)
+            ?? ""
+        self.status = container.decodeLossyStringIfPresent(forKey: .status)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(communityId, forKey: .community)
+        try container.encodeIfPresent(status, forKey: .status)
     }
 }
 
 struct VoteRequest: Codable {
     let value: Int
+}
+
+struct RefreshPassportWalletScoreRequest: Codable {
+    let communityId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case communityId = "community"
+    }
+}
+
+struct RefreshPassportWalletScoreResponse: Codable {
+    let walletScore: Double?
+    let walletScoreStatus: WalletScoreStatus?
+    let joinEligibility: JoinEligibility?
+
+    enum CodingKeys: String, CodingKey {
+        case walletScore = "wallet_score"
+        case walletScoreStatus = "wallet_score_status"
+        case joinEligibility = "join_eligibility"
+    }
 }
 
 struct EmptyBody: Codable {}
@@ -2376,6 +2667,7 @@ struct StartVerificationSessionRequest: Codable {
     let provider: String
     let providerMode: String?
     let requestedCapabilities: [String]?
+    let verificationRequirements: [VerificationRequirement]?
     let walletAttachmentId: String?
     let verificationIntent: String?
     let policyId: String?
@@ -2384,6 +2676,7 @@ struct StartVerificationSessionRequest: Codable {
         provider: String,
         providerMode: String? = nil,
         requestedCapabilities: [String]? = nil,
+        verificationRequirements: [VerificationRequirement]? = nil,
         walletAttachmentId: String? = nil,
         verificationIntent: String? = nil,
         policyId: String? = nil
@@ -2391,6 +2684,7 @@ struct StartVerificationSessionRequest: Codable {
         self.provider = provider
         self.providerMode = providerMode
         self.requestedCapabilities = requestedCapabilities
+        self.verificationRequirements = verificationRequirements
         self.walletAttachmentId = walletAttachmentId
         self.verificationIntent = verificationIntent
         self.policyId = policyId
@@ -2400,9 +2694,54 @@ struct StartVerificationSessionRequest: Codable {
         case provider
         case providerMode = "provider_mode"
         case requestedCapabilities = "requested_capabilities"
+        case verificationRequirements = "verification_requirements"
         case walletAttachmentId = "wallet_attachment_id"
         case verificationIntent = "verification_intent"
         case policyId = "policy_id"
+    }
+}
+
+struct VerificationRequirement: Codable, Equatable {
+    let proofType: String
+    let minimumAge: Int?
+    let requiredValues: [String]?
+
+    init(proofType: String, minimumAge: Int? = nil, requiredValues: [String]? = nil) {
+        self.proofType = proofType
+        self.minimumAge = minimumAge
+        self.requiredValues = requiredValues
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case proofType = "proof_type"
+        case minimumAge = "minimum_age"
+        case requiredValues = "required_values"
+    }
+}
+
+struct CompleteVerificationSessionRequest: Codable {
+    let attestationId: String?
+    let proof: String?
+    let proofHash: String?
+    let providerPayloadRef: JSONValue?
+
+    init(
+        attestationId: String? = nil,
+        proof: String? = nil,
+        proofHash: String? = nil,
+        providerPayloadRef: JSONValue? = nil
+    ) {
+        self.attestationId = attestationId
+        self.proof = proof
+        self.proofHash = proofHash
+        self.providerPayloadRef = providerPayloadRef
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case attestationId = "attestation_id"
+        case proof
+        case proofHash = "proof_hash"
+        case providerPayloadRef = "provider_payload_ref"
     }
 }
 

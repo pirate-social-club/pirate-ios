@@ -53,14 +53,16 @@ struct NavigationCoordinator: View {
             WalletView(sessionManager: sessionManager)
         case .chat:
             ChatPlaceholderView(sessionManager: sessionManager)
+        case .chatTarget(let target):
+            ChatPlaceholderView(sessionManager: sessionManager, initialTarget: target)
         case .notifications, .inbox:
             NotificationsView(sessionManager: sessionManager)
         case .onboarding:
             OnboardingView(sessionManager: sessionManager)
         case .verificationSelf(let intent):
-            VerificationView(sessionManager: sessionManager, provider: "self", intent: intent)
-        case .verificationVery:
-            VerificationView(sessionManager: sessionManager, provider: "very", intent: "profile_verification")
+            SelfVerificationView(sessionManager: sessionManager, intent: intent)
+        case .verificationVery(let intent):
+            VerificationView(sessionManager: sessionManager, provider: "very", intent: intent)
         }
     }
 }
