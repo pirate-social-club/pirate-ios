@@ -499,21 +499,26 @@ struct SettingsSectionView: View {
     }
 
     private var domainsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Domains")
-                .font(PirateTokens.Typography.h3)
-                .foregroundStyle(colors.textPrimary)
-            if let handle = sessionManager.profile?.globalHandle?.label {
-                infoRow(title: "Global handle", value: "@\(handle)")
+        VStack(alignment: .leading, spacing: 28) {
+            settingsSection("Pirate handle") {
+                pirateHandleSection
             }
-            let handles = sessionManager.profile?.linkedHandles ?? []
-            if handles.isEmpty {
-                Text("No linked domains yet.")
-                    .font(PirateTokens.Typography.caption)
-                    .foregroundStyle(colors.textSecondary)
-            } else {
-                ForEach(handles) { handle in
-                    infoRow(title: handle.label, value: handle.verificationState ?? "linked")
+
+            settingsSection("Public handles") {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let handle = sessionManager.profile?.globalHandle?.label {
+                        infoRow(title: "Global handle", value: "@\(handle)")
+                    }
+                    let handles = sessionManager.profile?.linkedHandles ?? []
+                    if handles.isEmpty {
+                        Text("No linked domains yet.")
+                            .font(PirateTokens.Typography.caption)
+                            .foregroundStyle(colors.textSecondary)
+                    } else {
+                        ForEach(handles) { handle in
+                            infoRow(title: handle.label, value: handle.verificationState ?? "linked")
+                        }
+                    }
                 }
             }
         }

@@ -88,6 +88,7 @@ struct WalletView: View {
     @State private var showReceiveSheet = false
     @State private var receiveChainId: WalletChainId = .ethereum
     @State private var showClaimUnavailable = false
+    @State private var showSignIn = false
 
     private var primaryWalletAddress: String? {
         sessionManager.currentSession?.profile.primaryWalletAddress?.trimmedNonEmpty
@@ -95,11 +96,22 @@ struct WalletView: View {
     }
 
     private var chainSections: [WalletChainSection] {
-        buildWalletChainSections(walletAddress: primaryWalletAddress)
+        if sessionManager.isAuthenticated {
+            return buildWalletChainSections(walletAddress: primaryWalletAddress)
+        }
+        return previewWalletChainSections
+    }
+
+    private var routeWalletAddress: String? {
+        sessionManager.isAuthenticated ? primaryWalletAddress : nil
     }
 
     private var assetRows: [WalletAssetRow] {
         chainSections.flatMap(\.assets).sorted(by: sortWalletAssetRows)
+    }
+
+    private var totalBalanceUsd: String {
+        formatWalletUsdTotal(assetRows)
     }
 
     private var hasClaimableRoyalties: Bool {
@@ -107,58 +119,84 @@ struct WalletView: View {
     }
 
     var body: some View {
-        AuthGate(isAuthenticated: sessionManager.isAuthenticated, sessionManager: sessionManager) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    MobilePageHeader("Wallet")
-                    balanceSection
-                    royaltiesSection
-                    assetsSection
-                }
-                .padding(.bottom, 24)
-            }
-            .background(colors.bgPage)
-            .hiddenRootNavigationBar()
-            .task(id: sessionManager.currentSession?.accessToken) {
-                await refreshClaimableRoyalties()
-            }
-            .sheet(isPresented: $showReceiveSheet) {
-                WalletReceiveSheet(
-                    chainSections: chainSections,
-                    selectedChainId: $receiveChainId,
-                    walletAddress: primaryWalletAddress
-                )
-                .walletSheetPresentation()
-            }
-            .alert("Claim royalties", isPresented: $showClaimUnavailable) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("Royalty claiming is not wired up in the iOS app yet.")
+        Group {
+            if sessionManager.isRestoringSession {
+                LoadingView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(colors.bgPage)
+            } else {
+                walletContent
             }
         }
     }
 
+    private var walletContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                MobilePageHeader("Wallet")
+                balanceSection
+                royaltiesSection
+                assetsSection
+            }
+            .padding(.bottom, 24)
+        }
+        .background(colors.bgPage)
+        .hiddenRootNavigationBar()
+        .task(id: sessionManager.currentSession?.accessToken) {
+            await refreshClaimableRoyalties()
+        }
+        .sheet(isPresented: $showReceiveSheet) {
+            WalletReceiveSheet(
+                chainSections: chainSections,
+                selectedChainId: $receiveChainId,
+                walletAddress: routeWalletAddress
+            )
+            .walletSheetPresentation()
+        }
+        .sheet(isPresented: $showSignIn) {
+            SignInDrawer(sessionManager: sessionManager, isPresented: $showSignIn)
+        }
+        .alert("Claim royalties", isPresented: $showClaimUnavailable) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Royalty claiming is not wired up in the iOS app yet.")
+        }
+    }
+
     private var balanceSection: some View {
-        let walletAddress = primaryWalletAddress
+        let walletAddress = routeWalletAddress
         let showWalletActions = walletAddress != nil
 
         return VStack(alignment: .leading, spacing: 0) {
             Text("Total balance")
                 .font(PirateTokens.Typography.body)
                 .foregroundStyle(colors.textSecondary)
-            Text("$0.00")
+            Text(totalBalanceUsd)
                 .font(.system(size: 36, weight: .semibold))
                 .foregroundStyle(colors.textPrimary)
                 .monospacedDigit()
                 .padding(.top, 2)
             if showWalletActions {
                 HStack(spacing: 12) {
-                    WalletOutlineButton(title: "Send", enabled: false) {}
-                    WalletOutlineButton(title: "Receive", enabled: walletAddress != nil) {
+                    WalletOutlineButton(title: "Send", enabled: !isZeroUsdAmount(totalBalanceUsd)) {}
+                    WalletOutlineButton(title: "Receive", enabled: true) {
                         receiveChainId = defaultReceiveChainId
                         showReceiveSheet = true
                     }
                 }
+                .padding(.top, 16)
+            } else if !sessionManager.isAuthenticated {
+                Button {
+                    showSignIn = true
+                } label: {
+                    Text("Sign In")
+                        .font(PirateTokens.Typography.bodyStrong)
+                        .foregroundStyle(colors.textOnAccent)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 56)
+                        .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: radii.lg))
+                }
+                .buttonStyle(.plain)
                 .padding(.top, 16)
             }
         }
@@ -397,7 +435,7 @@ private struct WalletIconCircle: View {
                 .scaledToFit()
                 .padding(padding)
         case .bitcoin:
-            Image(systemName: "bitcoinsign")
+            PirateSystemIconView(systemName: "bitcoinsign", size: iconSize * 0.74)
                 .font(.system(size: iconSize * 0.74, weight: .bold))
                 .foregroundStyle(.white)
         case .fallback(let label):
@@ -475,7 +513,7 @@ private struct WalletReceiveSheet: View {
                         Text(chain.title)
                             .font(PirateTokens.Typography.bodyStrong)
                             .foregroundStyle(colors.textPrimary)
-                        Image(systemName: "chevron.up.chevron.down")
+                        PirateSystemIconView(systemName: "chevron.up.chevron.down", size: 12)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(colors.textSecondary)
                     }
@@ -506,7 +544,7 @@ private struct WalletReceiveSheet: View {
             WalletQRCode(value: "\(chain.chainId.rawValue):\(address)")
 
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "qrcode.viewfinder")
+                PirateSystemIconView(systemName: "qrcode.viewfinder", size: 20)
                     .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(colors.textSecondary)
                     .padding(.top, 1)
@@ -583,7 +621,7 @@ private struct ChainIconMark: View {
             Circle()
                 .fill(Color(red: 0xF7 / 255.0, green: 0x93 / 255.0, blue: 0x1A / 255.0))
                 .overlay(
-                    Image(systemName: "bitcoinsign")
+                    PirateSystemIconView(systemName: "bitcoinsign", size: size * 0.48)
                         .font(.system(size: size * 0.48, weight: .bold))
                         .foregroundStyle(.white)
                 )
@@ -613,7 +651,7 @@ private struct WalletCopyField: View {
                 copyToPasteboard(value)
                 copied = true
             } label: {
-                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                PirateSystemIconView(systemName: copied ? "checkmark" : "doc.on.doc", size: 15)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(colors.textSecondary)
                     .frame(width: 32, height: 32)
@@ -642,7 +680,7 @@ private struct WalletQRCode: View {
             if let image = QRCodeGenerator.image(from: value) {
                 QRCodeImage(image: image)
             } else {
-                Image(systemName: "qrcode")
+                PirateSystemIconView(systemName: "qrcode", size: 92)
                     .font(.system(size: 92))
                     .foregroundStyle(.black)
             }
@@ -803,7 +841,9 @@ private func asset(
     _ symbol: String,
     _ name: String,
     _ chainId: WalletChainId,
-    tokenIcon: WalletIconKind
+    tokenIcon: WalletIconKind,
+    balance: String = "0",
+    fiatValue: String = "$0.00"
 ) -> WalletAssetRow {
     WalletAssetRow(
         id: id,
@@ -813,9 +853,85 @@ private func asset(
         chainTitle: chainId.title,
         tokenIcon: tokenIcon,
         chainIcon: chainId == .bitcoin ? nil : chainId.iconName.map(WalletIconKind.asset) ?? .fallback(chainId.title),
-        balance: "0",
-        fiatValue: "$0.00"
+        balance: balance,
+        fiatValue: fiatValue
     )
+}
+
+private let previewWalletAddress = "0xc74e2d06c9a7e304817b3c177b91e0c1f4873abc"
+
+private var previewWalletChainSections: [WalletChainSection] {
+    [
+        WalletChainSection(
+            chainId: .ethereum,
+            title: "Ethereum Sepolia",
+            walletAddress: previewWalletAddress,
+            assets: [
+                asset("ethereum-eth", "ETH", "Ether", .ethereum, tokenIcon: .asset("wallet_icon_ethereum")),
+                asset("ethereum-usdc", "USDC", "USD Coin", .ethereum, tokenIcon: .asset("wallet_icon_usdc")),
+                asset("ethereum-usdt", "USDT", "Tether USD", .ethereum, tokenIcon: .asset("wallet_icon_usdt"))
+            ]
+        ),
+        WalletChainSection(
+            chainId: .base,
+            title: "Base Sepolia",
+            walletAddress: previewWalletAddress,
+            assets: [
+                asset("base-eth", "ETH", "Ether", .base, tokenIcon: .asset("wallet_icon_ethereum")),
+                asset("base-usdc", "USDC", "USD Coin", .base, tokenIcon: .asset("wallet_icon_usdc"))
+            ]
+        ),
+        WalletChainSection(
+            chainId: .optimism,
+            title: "Optimism Sepolia",
+            walletAddress: previewWalletAddress,
+            assets: [
+                asset("optimism-eth", "ETH", "Ether", .optimism, tokenIcon: .asset("wallet_icon_ethereum"))
+            ]
+        ),
+        WalletChainSection(
+            chainId: .story,
+            title: "Story Aeneid",
+            walletAddress: previewWalletAddress,
+            assets: [
+                asset("story-ip", "IP", "IP", .story, tokenIcon: .asset("wallet_icon_ip")),
+                asset("story-wip", "WIP", "Wrapped IP", .story, tokenIcon: .asset("wallet_icon_ip"))
+            ]
+        ),
+        WalletChainSection(
+            chainId: .tempo,
+            title: "Tempo Moderato",
+            walletAddress: previewWalletAddress,
+            assets: [
+                asset("tempo-pathusd", "pathUSD", "pathUSD", .tempo, tokenIcon: .asset("wallet_icon_tempo"))
+            ]
+        ),
+        WalletChainSection(
+            chainId: .bitcoin,
+            title: "Bitcoin",
+            walletAddress: nil,
+            assets: [
+                asset("bitcoin-btc", "BTC", "Bitcoin", .bitcoin, tokenIcon: .bitcoin)
+            ]
+        ),
+        WalletChainSection(
+            chainId: .solana,
+            title: "Solana",
+            walletAddress: nil,
+            assets: [
+                asset("solana-sol", "SOL", "Solana", .solana, tokenIcon: .asset("wallet_icon_solana"))
+            ]
+        ),
+        WalletChainSection(
+            chainId: .cosmos,
+            title: "Cosmos",
+            walletAddress: nil,
+            assets: [
+                asset("cosmos-atom", "ATOM", "Cosmos Hub", .cosmos, tokenIcon: .asset("wallet_icon_cosmos")),
+                asset("cosmos-p2p", "P2P", "Sentinel", .cosmos, tokenIcon: .asset("wallet_icon_sentinel"))
+            ]
+        )
+    ]
 }
 
 private func sortWalletAssetRows(_ left: WalletAssetRow, _ right: WalletAssetRow) -> Bool {
@@ -862,6 +978,28 @@ private func sortWalletAssetRows(_ left: WalletAssetRow, _ right: WalletAssetRow
     }
 
     return left.chainTitle.localizedCompare(right.chainTitle) == .orderedAscending
+}
+
+private func formatWalletUsdTotal(_ rows: [WalletAssetRow]) -> String {
+    let total = rows.reduce(0.0) { partial, row in
+        partial + parseUsdAmount(row.fiatValue)
+    }
+
+    let formatter = NumberFormatter()
+    formatter.numberStyle = .currency
+    formatter.currencyCode = "USD"
+    formatter.maximumFractionDigits = 2
+    formatter.minimumFractionDigits = 2
+    return formatter.string(from: NSNumber(value: total)) ?? "$0.00"
+}
+
+private func parseUsdAmount(_ value: String) -> Double {
+    let filtered = value.filter { $0.isNumber || $0 == "." || $0 == "-" }
+    return Double(filtered) ?? 0
+}
+
+private func isZeroUsdAmount(_ value: String) -> Bool {
+    parseUsdAmount(value) == 0
 }
 
 private func formatWipAmount(_ wei: String) -> String {

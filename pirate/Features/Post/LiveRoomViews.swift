@@ -19,153 +19,184 @@ struct LiveRoomBannerView: View {
     let onWatch: () -> Void
     let onBuyTicket: () -> Void
     let onSignIn: () -> Void
+    var allowsMissingAccessRefresh = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: statusIcon)
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(statusTint)
-                    .frame(width: 34, height: 34)
-                    .background(colors.surfaceSubtle, in: Circle())
+        let presentation = LiveRoomPresentation(post: post, accessResponse: accessResponse, loadErrorMessage: errorMessage)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                thumbnail(for: presentation)
+                    .frame(width: 62, height: 62)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(presentation.title)
                         .font(PirateTokens.Typography.bodyStrong)
                         .foregroundStyle(colors.textPrimary)
                         .lineLimit(2)
-                    Text(detail)
-                        .font(PirateTokens.Typography.small)
-                        .foregroundStyle(colors.textSecondary)
-                        .lineLimit(3)
-                }
 
-                Spacer()
+                    if let subtitle = subtitle(for: presentation) {
+                        Text(subtitle)
+                            .font(PirateTokens.Typography.small)
+                            .foregroundStyle(colors.textSecondary)
+                            .lineLimit(2)
+                    }
+
+                    statusPill(for: presentation)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let action = action(for: presentation) {
+                    actionButton(action)
+                }
             }
 
-            if let errorMessage {
-                Text(errorMessage)
+            if let message = presentation.loadErrorMessage {
+                Text(message)
                     .font(PirateTokens.Typography.small)
                     .foregroundStyle(colors.accentDanger)
             }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.md))
+        .overlay(RoundedRectangle(cornerRadius: radii.md).stroke(colors.borderSoft, lineWidth: 1))
+    }
 
-            HStack(spacing: 10) {
-                if isLoading {
-                    ProgressView()
-                        .tint(colors.accentBrand)
-                }
+    @ViewBuilder
+    private func thumbnail(for presentation: LiveRoomPresentation) -> some View {
+        ZStack {
+            colors.surfaceSubtle
 
-                if let action = action {
-                    Button {
-                        switch action {
-                        case .watch:
-                            onWatch()
-                        case .buy:
-                            onBuyTicket()
-                        case .signIn:
-                            onSignIn()
-                        case .refresh:
-                            onRefresh()
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
-                            if isAttaching {
-                                ProgressView()
-                                    .tint(colors.textOnAccent)
-                            } else {
-                                Image(systemName: action.icon)
-                            }
-                            Text(isAttaching ? "Connecting..." : action.label)
-                        }
-                        .font(PirateTokens.Typography.smallStrong)
-                        .foregroundStyle(colors.textOnAccent)
-                        .padding(.horizontal, 16)
-                        .frame(height: 38)
-                        .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: radii.full))
+            if let coverURL = presentation.coverURL {
+                AsyncImage(url: coverURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        thumbnailFallback(for: presentation)
+                    case .empty:
+                        ProgressView()
+                            .tint(colors.accentBrand)
+                    @unknown default:
+                        thumbnailFallback(for: presentation)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(isAttaching)
-                    .opacity(isAttaching ? 0.65 : 1)
+                }
+            } else {
+                thumbnailFallback(for: presentation)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: radii.md))
+        .overlay(RoundedRectangle(cornerRadius: radii.md).stroke(colors.borderSoft, lineWidth: 1))
+        .clipped()
+    }
+
+    private func thumbnailFallback(for presentation: LiveRoomPresentation) -> some View {
+        PirateSystemIconView(systemName: presentation.statusIcon, size: 24)
+            .font(.system(size: 24, weight: .semibold))
+            .foregroundStyle(statusTint(for: presentation))
+    }
+
+    private func subtitle(for presentation: LiveRoomPresentation) -> String? {
+        if isLoading && accessResponse == nil {
+            return "Checking access"
+        }
+        return presentation.description == presentation.statusLabel ? nil : presentation.description
+    }
+
+    private func statusPill(for presentation: LiveRoomPresentation) -> some View {
+        HStack(spacing: 6) {
+            if isLoading && accessResponse == nil {
+                ProgressView()
+                    .tint(statusTint(for: presentation))
+                    .scaleEffect(0.72)
+            } else {
+                PirateSystemIconView(systemName: presentation.statusIcon, size: 12)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+
+            Text(isLoading && accessResponse == nil ? "Checking" : presentation.statusLabel)
+                .font(PirateTokens.Typography.smallStrong)
+                .lineLimit(1)
+        }
+        .foregroundStyle(statusTint(for: presentation))
+        .padding(.horizontal, 9)
+        .frame(height: 26)
+        .background(statusBackground(for: presentation), in: RoundedRectangle(cornerRadius: radii.full))
+        .overlay(RoundedRectangle(cornerRadius: radii.full).stroke(colors.borderSoft, lineWidth: 1))
+    }
+
+    private func statusBackground(for presentation: LiveRoomPresentation) -> Color {
+        presentation.status == .live ? colors.surfaceDanger : colors.surfaceSubtle
+    }
+
+    private func actionButton(_ action: LiveRoomBannerAction) -> some View {
+        Button {
+            switch action {
+            case .watch:
+                onWatch()
+            case .buy:
+                onBuyTicket()
+            case .signIn:
+                onSignIn()
+            case .refresh:
+                onRefresh()
+            }
+        } label: {
+            HStack(spacing: 7) {
+                if isAttaching {
+                    ProgressView()
+                        .tint(colors.textOnAccent)
+                        .scaleEffect(0.78)
+                } else {
+                    PirateSystemIconView(systemName: action.icon, size: 14)
+                        .font(.system(size: 14, weight: .semibold))
                 }
 
-                Spacer()
+                if action.showsLabel || isAttaching {
+                    Text(isAttaching ? "Connecting" : action.label)
+                        .font(PirateTokens.Typography.smallStrong)
+                        .lineLimit(1)
+                }
             }
+            .foregroundStyle(colors.textOnAccent)
+            .padding(.horizontal, action.showsLabel || isAttaching ? 13 : 0)
+            .frame(width: action.showsLabel || isAttaching ? nil : 38, height: 38)
+            .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: radii.full))
         }
-        .padding(14)
-        .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.lg))
-        .overlay(RoundedRectangle(cornerRadius: radii.lg).stroke(colors.borderSoft, lineWidth: 1))
+        .buttonStyle(.plain)
+        .disabled(isAttaching)
+        .opacity(isAttaching ? 0.65 : 1)
     }
 
-    private var room: LiveRoom? { accessResponse?.room }
-    private var access: LiveRoomAccess? { accessResponse?.access }
-    private var status: String { room?.status ?? post.anchorLiveRoomStatus ?? "scheduled" }
-
-    private var title: String {
-        room?.title ?? post.title ?? "Live room"
-    }
-
-    private var detail: String {
-        if isLoading && accessResponse == nil {
-            return "Checking live room access."
-        }
-        if let reason = access?.decisionReason {
-            switch reason {
-            case "purchase_required":
-                return "A ticket is required to watch this live room."
-            case "membership_required":
-                return "Join this community before watching."
-            case "not_live":
-                return "Come back when the host goes live."
-            case "ended":
-                return "This live room has ended."
-            case "canceled":
-                return "This live room was canceled."
-            default:
-                return "This live room is not available right now."
-            }
-        }
-        switch status {
-        case "live":
-            return "Watch the live broadcast from this post."
-        case "ended":
-            return "This live room has ended."
-        case "canceled":
-            return "This live room was canceled."
-        default:
-            return "Come back when the host goes live."
-        }
-    }
-
-    private var statusIcon: String {
-        switch status {
-        case "live": return "dot.radiowaves.left.and.right"
-        case "ended", "canceled": return "video.slash"
-        default: return "calendar"
-        }
-    }
-
-    private var statusTint: Color {
-        switch status {
-        case "live": return colors.accentDanger
-        case "ended", "canceled": return colors.textSecondary
+    private func statusTint(for presentation: LiveRoomPresentation) -> Color {
+        switch presentation.status {
+        case .live:
+            return colors.accentDanger
+        case .ended, .canceled:
+            return colors.textSecondary
         default: return colors.accentBrand
         }
     }
 
-    private var action: LiveRoomBannerAction? {
-        if access?.allowed == true && status == "live" {
+    private func action(for presentation: LiveRoomPresentation) -> LiveRoomBannerAction? {
+        switch presentation.primaryAction {
+        case .watch:
             return .watch
-        }
-        if access?.decisionReason == "purchase_required" {
+        case .buyTicket:
             return .buy
-        }
-        if access?.decisionReason == "membership_required" {
+        case .signIn:
             return .signIn
-        }
-        if access == nil || errorMessage != nil {
+        case .refresh:
+            if !allowsMissingAccessRefresh && presentation.loadErrorMessage == nil {
+                return nil
+            }
             return .refresh
+        case nil:
+            return nil
         }
-        return nil
     }
 }
 
@@ -192,6 +223,396 @@ private enum LiveRoomBannerAction {
         case .refresh: return "arrow.clockwise"
         }
     }
+
+    var showsLabel: Bool {
+        switch self {
+        case .watch, .refresh:
+            return false
+        case .buy, .signIn:
+            return true
+        }
+    }
+}
+
+struct LiveRoomPostContentView: View {
+    @Environment(\.pirateColors) private var colors
+    @Environment(\.pirateRadii) private var radii
+
+    let post: Post
+    let accessResponse: LiveRoomAccessResponse?
+    let isLoading: Bool
+    let isAttaching: Bool
+    let errorMessage: String?
+    let onRefresh: () -> Void
+    let onWatch: () -> Void
+    let onBuyTicket: () -> Void
+    let onSignIn: () -> Void
+
+    var body: some View {
+        let presentation = LiveRoomPresentation(post: post, accessResponse: accessResponse, loadErrorMessage: errorMessage)
+
+        VStack(alignment: .leading, spacing: 14) {
+            cover(for: presentation)
+
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(presentation.title)
+                        .font(PirateTokens.Typography.h3)
+                        .foregroundStyle(colors.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    statusPill(for: presentation)
+                }
+
+                Spacer(minLength: 0)
+
+                if let action = presentation.primaryAction {
+                    actionButton(action, presentation: presentation)
+                }
+            }
+
+            Text(isLoading && accessResponse == nil ? "Checking live room access." : presentation.description)
+                .font(PirateTokens.Typography.body)
+                .foregroundStyle(colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let message = presentation.loadErrorMessage {
+                Text(message)
+                    .font(PirateTokens.Typography.small)
+                    .foregroundStyle(colors.accentDanger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let body = presentation.body, body != presentation.title {
+                Text(body)
+                    .font(PirateTokens.Typography.body)
+                    .foregroundStyle(colors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let room = accessResponse?.room, !room.setlist.items.isEmpty {
+                setlistPreview(room.setlist.items)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func cover(for presentation: LiveRoomPresentation) -> some View {
+        ZStack {
+            if let coverURL = presentation.coverURL {
+                AsyncImage(url: coverURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        coverFallback
+                    case .empty:
+                        ZStack {
+                            colors.bgElevated
+                            ProgressView().tint(colors.accentBrand)
+                        }
+                    @unknown default:
+                        coverFallback
+                    }
+                }
+            } else {
+                coverFallback
+            }
+        }
+        .aspectRatio(16 / 9, contentMode: .fit)
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: radii.lg))
+        .overlay(RoundedRectangle(cornerRadius: radii.lg).stroke(colors.borderSoft, lineWidth: 1))
+        .clipped()
+    }
+
+    private var coverFallback: some View {
+        ZStack {
+            colors.bgElevated
+            PirateSystemIconView(systemName: "dot.radiowaves.left.and.right", size: 42)
+                .font(.system(size: 42, weight: .semibold))
+                .foregroundStyle(colors.textSecondary)
+        }
+    }
+
+    private func statusPill(for presentation: LiveRoomPresentation) -> some View {
+        HStack(spacing: 6) {
+            PirateSystemIconView(systemName: presentation.statusIcon, size: 13)
+                .font(.system(size: 13, weight: .semibold))
+            Text(presentation.statusLabel)
+                .font(PirateTokens.Typography.smallStrong)
+        }
+        .foregroundStyle(statusTint(for: presentation))
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .background(statusBackground(for: presentation), in: RoundedRectangle(cornerRadius: radii.full))
+        .overlay(RoundedRectangle(cornerRadius: radii.full).stroke(colors.borderSoft, lineWidth: 1))
+    }
+
+    private func actionButton(_ action: LiveRoomPresentation.PrimaryAction, presentation: LiveRoomPresentation) -> some View {
+        Button {
+            switch action {
+            case .watch:
+                onWatch()
+            case .buyTicket:
+                onBuyTicket()
+            case .signIn:
+                onSignIn()
+            case .refresh:
+                onRefresh()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                if isAttaching {
+                    ProgressView().tint(colors.textOnAccent)
+                } else {
+                    PirateSystemIconView(systemName: action.icon)
+                }
+                Text(isAttaching ? "Connecting..." : action.label)
+            }
+            .font(PirateTokens.Typography.smallStrong)
+            .foregroundStyle(colors.textOnAccent)
+            .padding(.horizontal, 16)
+            .frame(height: 38)
+            .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: radii.full))
+        }
+        .buttonStyle(.plain)
+        .disabled(isAttaching)
+        .opacity(isAttaching ? 0.65 : 1)
+    }
+
+    private func setlistPreview(_ items: [LiveRoomSetlistItem]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("Setlist")
+                    .font(PirateTokens.Typography.bodyStrong)
+                    .foregroundStyle(colors.textPrimary)
+                Text("\(items.count) songs")
+                    .font(PirateTokens.Typography.caption)
+                    .foregroundStyle(colors.textSecondary)
+                    .padding(.horizontal, 8)
+                    .frame(height: 22)
+                    .background(colors.surfaceSubtle, in: RoundedRectangle(cornerRadius: radii.full))
+            }
+
+            ForEach(items.prefix(3)) { item in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(item.position).")
+                        .font(PirateTokens.Typography.caption)
+                        .foregroundStyle(colors.textSecondary)
+                        .monospacedDigit()
+                    Text(item.artist.map { "\(item.title) - \($0)" } ?? item.title)
+                        .font(PirateTokens.Typography.caption)
+                        .foregroundStyle(colors.textPrimary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(12)
+        .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.md))
+        .overlay(RoundedRectangle(cornerRadius: radii.md).stroke(colors.borderSoft, lineWidth: 1))
+    }
+
+    private func statusTint(for presentation: LiveRoomPresentation) -> Color {
+        switch presentation.status {
+        case .live:
+            return colors.accentDanger
+        case .ended, .canceled:
+            return colors.textSecondary
+        default:
+            return colors.accentBrand
+        }
+    }
+
+    private func statusBackground(for presentation: LiveRoomPresentation) -> Color {
+        presentation.status == .live ? colors.surfaceDanger : colors.surfaceSubtle
+    }
+}
+
+struct LiveRoomPresentation {
+    enum Status {
+        case scheduled
+        case live
+        case ended
+        case canceled
+        case unknown
+    }
+
+    enum AccessState {
+        case allowed
+        case purchaseRequired
+        case membershipRequired
+        case waiting
+        case ended
+        case canceled
+        case unavailable
+        case unknown
+    }
+
+    enum PrimaryAction {
+        case watch
+        case buyTicket
+        case signIn
+        case refresh
+
+        var label: String {
+            switch self {
+            case .watch: return "Watch live"
+            case .buyTicket: return "Buy ticket"
+            case .signIn: return "Sign in"
+            case .refresh: return "Refresh"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .watch: return "play.fill"
+            case .buyTicket: return "ticket"
+            case .signIn: return "person.crop.circle"
+            case .refresh: return "arrow.clockwise"
+            }
+        }
+    }
+
+    let post: Post
+    let accessResponse: LiveRoomAccessResponse?
+    let loadErrorMessage: String?
+
+    var room: LiveRoom? { accessResponse?.room }
+    var access: LiveRoomAccess? { accessResponse?.access }
+
+    var title: String {
+        room?.title ?? post.title ?? "Live room"
+    }
+
+    var body: String? {
+        room?.description ?? post.body
+    }
+
+    var status: Status {
+        switch room?.status ?? post.anchorLiveRoomStatus {
+        case "scheduled": return .scheduled
+        case "live": return .live
+        case "ended": return .ended
+        case "canceled": return .canceled
+        default: return .unknown
+        }
+    }
+
+    var accessState: AccessState {
+        if access?.allowed == true {
+            return .allowed
+        }
+
+        switch access?.decisionReason {
+        case "purchase_required": return .purchaseRequired
+        case "membership_required": return .membershipRequired
+        case "not_live": return .waiting
+        case "ended": return .ended
+        case "canceled": return .canceled
+        case nil:
+            return loadErrorMessage == nil ? .unknown : .unavailable
+        default:
+            return .unavailable
+        }
+    }
+
+    var statusLabel: String {
+        switch status {
+        case .live: return "Live now"
+        case .ended: return "Ended"
+        case .canceled: return "Canceled"
+        case .scheduled: return "Scheduled"
+        case .unknown: return "Live room"
+        }
+    }
+
+    var description: String {
+        if let loadErrorMessage {
+            return accessResponse == nil ? "Live room details could not be loaded." : stateDescription
+        }
+        return stateDescription
+    }
+
+    private var stateDescription: String {
+        switch accessState {
+        case .purchaseRequired:
+            return "A ticket is required to watch this live room."
+        case .membershipRequired:
+            return "Join this community before watching."
+        case .waiting:
+            return "Come back when the host goes live."
+        case .ended:
+            return "Ended"
+        case .canceled:
+            return "Canceled"
+        case .unavailable:
+            return "This live room is not available right now."
+        case .allowed, .unknown:
+            switch status {
+            case .live:
+                return "Watch the live broadcast from this post."
+            case .ended:
+                return "Ended"
+            case .canceled:
+                return "Canceled"
+            case .scheduled, .unknown:
+                return "Come back when the host goes live."
+            }
+        }
+    }
+
+    var statusIcon: String {
+        switch status {
+        case .live: return "dot.radiowaves.left.and.right"
+        case .ended: return "checkmark.circle"
+        case .canceled: return "xmark"
+        case .scheduled, .unknown: return "calendar"
+        }
+    }
+
+    var coverURL: URL? {
+        ApiClient.shared.publicMediaURL(from: room?.coverRef)
+            ?? PiratePostMediaItem.primary(for: post)?.previewURL
+    }
+
+    var primaryAction: PrimaryAction? {
+        if loadErrorMessage != nil {
+            return .refresh
+        }
+        if accessState == .allowed && status == .live {
+            return .watch
+        }
+        if accessState == .purchaseRequired {
+            return .buyTicket
+        }
+        if accessState == .membershipRequired {
+            return .signIn
+        }
+        if accessResponse == nil && status != .ended && status != .canceled {
+            return .refresh
+        }
+        return nil
+    }
+}
+
+extension ApiError {
+    var liveRoomDecisionReason: String? {
+        guard case .object(let values) = details else { return nil }
+        return values["decision_reason"]?.stringValue
+    }
+
+    var isResolvedLiveRoomUnavailable: Bool {
+        switch liveRoomDecisionReason {
+        case "not_live", "ended", "canceled":
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 struct LiveRoomViewerView: View {
@@ -206,6 +627,7 @@ struct LiveRoomViewerView: View {
         LiveRoomViewerContent(
             attachResponse: attachResponse,
             onRenew: onRenew,
+            presentation: .fullScreen,
             onClose: { dismiss() }
         )
         .onChange(of: scenePhase) { _, phase in
@@ -217,44 +639,92 @@ struct LiveRoomViewerView: View {
     }
 }
 
+struct LiveRoomInlineViewerView: View {
+    @Environment(\.pirateColors) private var colors
+    @Environment(\.pirateRadii) private var radii
+
+    let attachResponse: LiveRoomViewerAttachResponse
+    let onRenew: (UInt) async throws -> LiveRoomViewerAttachResponse
+
+    var body: some View {
+        LiveRoomViewerContent(
+            attachResponse: attachResponse,
+            onRenew: onRenew,
+            presentation: .inline,
+            onClose: nil
+        )
+        .aspectRatio(16 / 9, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: radii.lg))
+        .overlay(RoundedRectangle(cornerRadius: radii.lg).stroke(colors.borderSoft, lineWidth: 1))
+    }
+}
+
+private enum LiveRoomViewerPresentation {
+    case fullScreen
+    case inline
+}
+
 #if canImport(AgoraRtcKit) && os(iOS)
 private struct LiveRoomViewerContent: View {
     @StateObject private var controller = LiveRoomAgoraController()
 
     let attachResponse: LiveRoomViewerAttachResponse
     let onRenew: (UInt) async throws -> LiveRoomViewerAttachResponse
-    let onClose: () -> Void
+    let presentation: LiveRoomViewerPresentation
+    let onClose: (() -> Void)?
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Color.black.ignoresSafeArea()
+            background
 
             if let remoteUid = controller.remoteUid, let engine = controller.engine {
-                AgoraRemoteVideoView(engine: engine, uid: remoteUid)
-                    .ignoresSafeArea()
+                remoteVideo(engine: engine, uid: remoteUid)
             } else {
                 LiveRoomViewerStatusView(status: controller.status, errorMessage: controller.errorMessage)
             }
 
-            Button {
-                controller.leave()
-                onClose()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 42, height: 42)
-                    .background(.black.opacity(0.55), in: Circle())
+            if let onClose {
+                Button {
+                    controller.leave()
+                    onClose()
+                } label: {
+                    PirateSystemIconView(systemName: "xmark", size: 16)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 42, height: 42)
+                        .background(.black.opacity(0.55), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 18)
+                .padding(.trailing, 16)
             }
-            .buttonStyle(.plain)
-            .padding(.top, 18)
-            .padding(.trailing, 16)
         }
         .onAppear {
             controller.join(attachResponse: attachResponse, onRenew: onRenew)
         }
         .onDisappear {
             controller.leave()
+        }
+    }
+
+    @ViewBuilder
+    private var background: some View {
+        switch presentation {
+        case .fullScreen:
+            Color.black.ignoresSafeArea()
+        case .inline:
+            Color.black
+        }
+    }
+
+    @ViewBuilder
+    private func remoteVideo(engine: AgoraRtcEngineKit, uid: UInt) -> some View {
+        switch presentation {
+        case .fullScreen:
+            AgoraRemoteVideoView(engine: engine, uid: uid)
+                .ignoresSafeArea()
+        case .inline:
+            AgoraRemoteVideoView(engine: engine, uid: uid)
         }
     }
 }
@@ -390,27 +860,35 @@ private struct AgoraRemoteVideoView: UIViewRepresentable {
 private struct LiveRoomViewerContent: View {
     let attachResponse: LiveRoomViewerAttachResponse
     let onRenew: (UInt) async throws -> LiveRoomViewerAttachResponse
-    let onClose: () -> Void
+    let presentation: LiveRoomViewerPresentation
+    let onClose: (() -> Void)?
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Color.black.ignoresSafeArea()
+            switch presentation {
+            case .fullScreen:
+                Color.black.ignoresSafeArea()
+            case .inline:
+                Color.black
+            }
             LiveRoomViewerStatusView(
                 status: "Live playback is unavailable in this build.",
                 errorMessage: attachResponse.agora.configured ? nil : "Agora is not configured for this environment."
             )
-            Button {
-                onClose()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 42, height: 42)
-                    .background(.black.opacity(0.55), in: Circle())
+            if let onClose {
+                Button {
+                    onClose()
+                } label: {
+                    PirateSystemIconView(systemName: "xmark", size: 16)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 42, height: 42)
+                        .background(.black.opacity(0.55), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 18)
+                .padding(.trailing, 16)
             }
-            .buttonStyle(.plain)
-            .padding(.top, 18)
-            .padding(.trailing, 16)
         }
     }
 }
@@ -422,7 +900,7 @@ private struct LiveRoomViewerStatusView: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            Image(systemName: "dot.radiowaves.left.and.right")
+            PirateSystemIconView(systemName: "dot.radiowaves.left.and.right", size: 42)
                 .font(.system(size: 42, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.9))
             Text(status)

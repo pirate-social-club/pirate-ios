@@ -23,6 +23,55 @@ extension View {
         self
         #endif
     }
+
+}
+
+func formatRelativeTimestamp(_ value: String?) -> String {
+    guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+        return ""
+    }
+
+    let date: Date?
+    if let epoch = Double(value), epoch > 0 {
+        let seconds = epoch > 10_000_000_000 ? epoch / 1000 : epoch
+        date = Date(timeIntervalSince1970: seconds)
+    } else {
+        date = parseAPITimestamp(value)
+    }
+
+    guard let date else { return "" }
+    let diff = Date().timeIntervalSince(date)
+    let isFuture = diff < 0
+    let diffMinutes = Int(abs(diff) / 60)
+    if diffMinutes < 1 { return "now" }
+    if diffMinutes < 60 { return isFuture ? "in \(diffMinutes)m" : "\(diffMinutes)m" }
+
+    let diffHours = diffMinutes / 60
+    if diffHours < 24 { return isFuture ? "in \(diffHours)h" : "\(diffHours)h" }
+
+    let diffDays = diffHours / 24
+    if diffDays < 7 { return isFuture ? "in \(diffDays)d" : "\(diffDays)d" }
+
+    let diffWeeks = diffDays / 7
+    if diffWeeks < 5 { return isFuture ? "in \(diffWeeks)w" : "\(diffWeeks)w" }
+
+    let diffMonths = diffDays / 30
+    if diffMonths < 12 { return isFuture ? "in \(diffMonths)mo" : "\(diffMonths)mo" }
+
+    let diffYears = max(1, diffDays / 365)
+    return isFuture ? "in \(diffYears)y" : "\(diffYears)y"
+}
+
+private func parseAPITimestamp(_ value: String) -> Date? {
+    let fractionalFormatter = ISO8601DateFormatter()
+    fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractionalFormatter.date(from: value) {
+        return date
+    }
+
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    return formatter.date(from: value)
 }
 
 struct MobilePageHeader<Actions: View>: View {
@@ -98,7 +147,7 @@ func buildDefaultUserAvatarURL(seedSource: String, size: Int = 128) -> URL? {
     let background = defaultUserAvatarBackgroundColors[
         Int(defaultUserAvatarHash(seed) % UInt32(defaultUserAvatarBackgroundColors.count))
     ]
-    var components = URLComponents(string: "https://api.dicebear.com/9.x/thumbs/svg")
+    var components = URLComponents(string: "https://api.dicebear.com/9.x/thumbs/png")
     components?.queryItems = [
         URLQueryItem(name: "seed", value: seed),
         URLQueryItem(name: "size", value: String(size)),
@@ -110,6 +159,37 @@ func buildDefaultUserAvatarURL(seedSource: String, size: Int = 128) -> URL? {
         URLQueryItem(name: "shapeColor", value: "f7f5f0,fffdf7,f6f3eb")
     ]
     return components?.url
+}
+
+private func nativeRenderableAvatarURL(from avatarRef: String?) -> URL? {
+    guard let url = ApiClient.shared.publicMediaURL(from: avatarRef) else { return nil }
+
+    if url.scheme?.lowercased() == "data" {
+        return nil
+    }
+
+    if let dicebearPNG = dicebearPNGURL(from: url) {
+        return dicebearPNG
+    }
+
+    if url.pathExtension.lowercased() == "svg" {
+        return nil
+    }
+
+    return url
+}
+
+private func dicebearPNGURL(from url: URL) -> URL? {
+    guard
+        url.host?.lowercased() == "api.dicebear.com",
+        url.path.hasSuffix("/svg"),
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    else {
+        return nil
+    }
+
+    components.path = String(components.path.dropLast(4)) + "/png"
+    return components.url
 }
 
 private func defaultUserAvatarHash(_ seed: String) -> UInt32 {
@@ -136,7 +216,7 @@ struct AvatarView: View {
     }
 
     var body: some View {
-        if let url = ApiClient.shared.publicMediaURL(from: avatarRef) {
+        if let url = nativeRenderableAvatarURL(from: avatarRef) {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
@@ -190,7 +270,7 @@ struct AvatarView: View {
                         Text(initials)
                             .font(.system(size: size * 0.32, weight: .semibold))
                     } else {
-                        Image(systemName: "person.fill")
+                        PirateSystemIconView(systemName: "person.fill", size: size * 0.4)
                             .font(.system(size: size * 0.4))
                     }
                 }
@@ -203,6 +283,65 @@ struct AvatarView: View {
         let trimmed = fallbackLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         return String(trimmed.prefix(2)).uppercased()
+    }
+}
+
+struct CommunityRoleIconBadgeView: View {
+    @Environment(\.pirateColors) private var colors
+    let role: String?
+    var size: CGFloat = 16
+
+    private var normalizedRole: String? {
+        guard let role = role?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !role.isEmpty else {
+            return nil
+        }
+        if role == "owner" { return "owner" }
+        if role == "admin" || role == "moderator" { return "moderator" }
+        return nil
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if let normalizedRole {
+            PirateIconView(
+                icon: normalizedRole == "owner" ? .crownCross : .shield,
+                filled: true,
+                size: size,
+                color: normalizedRole == "owner" ? colors.accentWarning : colors.textSecondary
+            )
+            .accessibilityLabel(normalizedRole == "owner" ? "Owner" : "Moderator")
+        }
+    }
+}
+
+struct CommunityNameLabel: View {
+    @Environment(\.pirateColors) private var colors
+
+    let text: String
+    let isUnverified: Bool
+    var font: Font = PirateTokens.Typography.smallStrong
+    var color: Color? = nil
+    var iconSize: CGFloat = 13
+    var lineLimit: Int? = 1
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(text)
+                .font(font)
+                .foregroundStyle(color ?? colors.textPrimary)
+                .lineLimit(lineLimit)
+                .layoutPriority(1)
+
+            if isUnverified {
+                PirateIconView(
+                    icon: .warningCircle,
+                    filled: true,
+                    size: iconSize,
+                    color: colors.accentWarning
+                )
+                .accessibilityLabel("Unverified community")
+            }
+        }
     }
 }
 
@@ -221,12 +360,14 @@ struct VoteButton: View {
     var body: some View {
         Button {
             if isUpvote {
-                onVote(voteValue == 1 ? 0 : 1)
+                guard voteValue != 1 else { return }
+                onVote(1)
             } else {
-                onVote(voteValue == -1 ? 0 : -1)
+                guard voteValue != -1 else { return }
+                onVote(-1)
             }
         } label: {
-            Image(systemName: isUpvote ? "arrow.up" : "arrow.down")
+            PirateSystemIconView(systemName: isUpvote ? "arrow.up" : "arrow.down", size: 16)
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(isActive ? colors.accentBrand : colors.textSecondary)
         }
@@ -268,7 +409,7 @@ struct ErrorView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle")
+            PirateSystemIconView(systemName: "exclamationmark.triangle", size: 32)
                 .font(.system(size: 32))
                 .foregroundStyle(colors.accentWarning)
             Text(message)
@@ -301,7 +442,7 @@ struct EmptyStateView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: icon)
+            PirateSystemIconView(systemName: icon, size: 40)
                 .font(.system(size: 40))
                 .foregroundStyle(colors.textSecondary)
             Text(title)

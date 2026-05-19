@@ -1,9 +1,14 @@
+import Foundation
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct PirateScaffold: View {
     @Environment(\.pirateColors) private var colors
     @State private var selectedTab: PirateTab = .home
     @State private var homePath: [PirateRoute] = []
+    @State private var homeScrollToTopTrigger = 0
     @State private var walletPath: [PirateRoute] = []
     @State private var chatPath: [PirateRoute] = []
     @State private var notificationsPath: [PirateRoute] = []
@@ -11,14 +16,22 @@ struct PirateScaffold: View {
     @Bindable var sessionManager: SessionManager
 
     var body: some View {
-        selectedTabContent
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
+        GeometryReader { _ in
+            ZStack(alignment: .bottom) {
+                selectedTabContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.bottom, currentRouteHidesFooter ? 0 : bottomBarHeight)
+
                 if !currentRouteHidesFooter {
                     bottomBar
                 }
             }
             .background(colors.bgPage.ignoresSafeArea())
+            .ignoresSafeArea(.container, edges: .bottom)
+            #if DEBUG
+            .onAppear(perform: applyDebugLaunchRouteIfNeeded)
+            #endif
+        }
     }
 
     @ViewBuilder
@@ -26,7 +39,7 @@ struct PirateScaffold: View {
         switch selectedTab {
         case .home:
             NavigationStack(path: $homePath) {
-                HomeView(sessionManager: sessionManager)
+                HomeView(sessionManager: sessionManager, scrollToTopTrigger: homeScrollToTopTrigger)
                     .navigationDestination(for: PirateRoute.self) { route in
                         routeDestination(for: route)
                     }
@@ -87,16 +100,32 @@ struct PirateScaffold: View {
         .frame(maxWidth: .infinity)
         .background(colors.bgPage)
         .overlay(Rectangle().fill(colors.borderSoft).frame(height: 0.5), alignment: .top)
-        .ignoresSafeArea(.container, edges: .bottom)
     }
 
     private var bottomBarHeight: CGFloat {
         56
     }
 
+    #if DEBUG
+    @State private var didApplyDebugLaunchRoute = false
+
+    private func applyDebugLaunchRouteIfNeeded() {
+        guard !didApplyDebugLaunchRoute else { return }
+        didApplyDebugLaunchRoute = true
+
+        guard let postId = ProcessInfo.processInfo.environment["PIRATE_DEBUG_POST_ID"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !postId.isEmpty
+        else { return }
+
+        selectedTab = .home
+        homePath = [.post(postId)]
+    }
+    #endif
+
     private func tabButton(_ tab: PirateTab) -> some View {
         Button {
-            selectedTab = tab
+            handleTabTap(tab)
         } label: {
             let isSelected = selectedTab == tab
             PirateIconView(
@@ -106,12 +135,46 @@ struct PirateScaffold: View {
                 color: isSelected ? colors.textPrimary : colors.textSecondary
             )
             .frame(maxWidth: .infinity)
-            .frame(height: 44)
+            .frame(height: bottomBarHeight)
             .contentShape(Rectangle())
             .accessibilityLabel(tab.rawValue)
             .accessibilityAddTraits(isSelected ? .isSelected : [])
         }
         .buttonStyle(.plain)
+    }
+
+    private func handleTabTap(_ tab: PirateTab) {
+        guard selectedTab == tab else {
+            selectedTab = tab
+            return
+        }
+
+        switch tab {
+        case .home:
+            triggerHomeTabReselection()
+        default:
+            break
+        }
+    }
+
+    private func triggerHomeTabReselection() {
+        makeTabReselectionFeedback()
+
+        guard homePath.isEmpty else {
+            homePath.removeAll()
+            homeScrollToTopTrigger += 1
+            return
+        }
+
+        homeScrollToTopTrigger += 1
+    }
+
+    private func makeTabReselectionFeedback() {
+        #if os(iOS)
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.prepare()
+        generator.impactOccurred()
+        #endif
     }
 
     @ViewBuilder
@@ -125,6 +188,8 @@ struct PirateScaffold: View {
             HomeView(sessionManager: sessionManager)
         case .chat:
             ChatPlaceholderView(sessionManager: sessionManager)
+        case .chatTarget(let target):
+            ChatPlaceholderView(sessionManager: sessionManager, initialTarget: target)
         case .yourCommunities:
             YourCommunitiesView(sessionManager: sessionManager)
         case .community(let id):
@@ -158,9 +223,9 @@ struct PirateScaffold: View {
         case .publicProfileByWallet(let address):
             PublicProfileView(handle: address, walletAddress: address)
         case .verificationSelf(let intent):
-            VerificationView(sessionManager: sessionManager, provider: "self", intent: intent)
-        case .verificationVery:
-            VerificationView(sessionManager: sessionManager, provider: "very", intent: "profile_verification")
+            SelfVerificationView(sessionManager: sessionManager, intent: intent)
+        case .verificationVery(let intent):
+            VerificationView(sessionManager: sessionManager, provider: "very", intent: intent)
         }
     }
 }

@@ -107,6 +107,7 @@
 				TargetAttributes = {
 					ACCB6B342FB82B84009AD74C = {
 						CreatedOnToolsVersion = 26.5;
+						ProvisioningStyle = Automatic;
 					};
 				};
 			};

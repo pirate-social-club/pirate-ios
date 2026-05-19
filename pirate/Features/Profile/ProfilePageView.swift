@@ -88,7 +88,11 @@ struct PirateProfilePage: View {
     let data: ProfilePageData
     var pageTitle: String?
     var editDestination: PirateRoute?
+    var viewerFollows = false
+    var followBusy = false
+    var followDisabled = true
     var onEditProfile: (() -> Void)?
+    var onToggleFollow: (() -> Void)?
     var onMessage: ((String) -> Void)?
 
     @State private var selectedTab: ProfilePageTab = .overview
@@ -114,7 +118,11 @@ struct PirateProfilePage: View {
                 ProfileIdentityHero(
                     data: data,
                     editDestination: editDestination,
+                    viewerFollows: viewerFollows,
+                    followBusy: followBusy,
+                    followDisabled: followDisabled,
                     onEditProfile: onEditProfile,
+                    onToggleFollow: onToggleFollow,
                     onMessage: onMessage
                 )
 
@@ -223,6 +231,7 @@ struct PirateProfilePage: View {
             } else {
                 activityResponse = mergedActivityResponse(existing: activityResponse, next: response)
             }
+            cachePostSnapshots(from: response)
             loadedActivityTab = selectedTab
         } catch let error as ApiError {
             activityErrorMessage = error.displayMessage
@@ -241,6 +250,20 @@ struct PirateProfilePage: View {
             nextCursor: next.nextCursor
         )
     }
+
+    private func cachePostSnapshots(from response: ProfileActivityResponse) {
+        var posts = response.posts.map(\.post)
+        posts.append(contentsOf: response.comments.map(\.threadRootPost))
+        for item in response.overviewItems {
+            switch item {
+            case .post(let post):
+                posts.append(post.post)
+            case .comment(let comment):
+                posts.append(comment.threadRootPost)
+            }
+        }
+        PostSnapshotCache.shared.store(contentsOf: posts)
+    }
 }
 
 private struct ProfileIdentityHero: View {
@@ -248,7 +271,11 @@ private struct ProfileIdentityHero: View {
 
     let data: ProfilePageData
     let editDestination: PirateRoute?
+    let viewerFollows: Bool
+    let followBusy: Bool
+    let followDisabled: Bool
     let onEditProfile: (() -> Void)?
+    let onToggleFollow: (() -> Void)?
     let onMessage: ((String) -> Void)?
 
     private var profile: Profile { data.profile }
@@ -313,14 +340,21 @@ private struct ProfileIdentityHero: View {
                         viewerContext: data.viewerContext,
                         messageTarget: data.messageTarget,
                         editDestination: editDestination,
+                        viewerFollows: viewerFollows,
+                        followBusy: followBusy,
+                        followDisabled: followDisabled,
                         onEditProfile: onEditProfile,
+                        onToggleFollow: onToggleFollow,
                         onMessage: onMessage
                     )
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, PirateTokens.pageGutter)
             .padding(.top, 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -328,7 +362,11 @@ private struct ProfileHeroAction: View {
     let viewerContext: ProfileViewerContext
     let messageTarget: String?
     let editDestination: PirateRoute?
+    let viewerFollows: Bool
+    let followBusy: Bool
+    let followDisabled: Bool
     let onEditProfile: (() -> Void)?
+    let onToggleFollow: (() -> Void)?
     let onMessage: ((String) -> Void)?
 
     var body: some View {
@@ -336,26 +374,56 @@ private struct ProfileHeroAction: View {
         case .selfProfile:
             if let editDestination {
                 NavigationLink(value: editDestination) {
-                    ProfileButtonLabel(text: "Edit", icon: .pencilSimple)
+                    ProfileButtonLabel(text: "Edit", icon: .pencilSimple, tone: .primary)
                 }
                 .buttonStyle(.plain)
             } else if let onEditProfile {
                 Button(action: onEditProfile) {
-                    ProfileButtonLabel(text: "Edit", icon: .pencilSimple)
+                    ProfileButtonLabel(text: "Edit", icon: .pencilSimple, tone: .primary)
                 }
                 .buttonStyle(.plain)
             }
         case .publicProfile:
-            if let messageTarget, let onMessage {
+            HStack(spacing: 10) {
                 Button {
-                    onMessage(messageTarget)
+                    onToggleFollow?()
                 } label: {
-                    ProfileButtonLabel(text: "Message", icon: .chatCircle)
+                    ProfileButtonLabel(
+                        text: viewerFollows ? "Following" : "Follow",
+                        icon: .userPlus,
+                        tone: viewerFollows ? .secondary : .primary,
+                        loading: followBusy
+                    )
                 }
                 .buttonStyle(.plain)
+                .disabled(followBusy || followDisabled || onToggleFollow == nil)
+
+                if let messageTarget {
+                    if let onMessage {
+                        Button {
+                            onMessage(messageTarget)
+                        } label: {
+                            ProfileButtonLabel(text: "Message", icon: .chatCircle, tone: .secondary)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        NavigationLink(value: PirateRoute.chatTarget(messageTarget)) {
+                            ProfileButtonLabel(text: "Message", icon: .chatCircle, tone: .secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } else {
+                    ProfileButtonLabel(text: "Message", icon: .chatCircle, tone: .secondary)
+                        .opacity(0.55)
+                }
             }
         }
     }
+}
+
+private enum ProfileButtonTone {
+    case primary
+    case secondary
 }
 
 private struct ProfileButtonLabel: View {
@@ -364,19 +432,37 @@ private struct ProfileButtonLabel: View {
 
     let text: String
     let icon: PirateIcon?
+    let tone: ProfileButtonTone
+    var loading = false
+
+    private var foreground: Color {
+        tone == .primary ? colors.textOnAccent : colors.textPrimary
+    }
+
+    private var background: Color {
+        tone == .primary ? colors.accentBrand : colors.surfaceSubtle
+    }
 
     var body: some View {
         HStack(spacing: 8) {
+            if loading {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(foreground)
+            }
             if let icon {
-                PirateIconView(icon: icon, size: 17, color: colors.textOnAccent)
+                PirateIconView(icon: icon, size: 17, color: foreground)
             }
             Text(text)
                 .font(PirateTokens.Typography.bodyStrong)
+                .lineLimit(1)
+                .minimumScaleFactor(0.86)
         }
-        .foregroundStyle(colors.textOnAccent)
+        .foregroundStyle(foreground)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: radii.full))
+        .background(background, in: RoundedRectangle(cornerRadius: radii.full))
+        .overlay(RoundedRectangle(cornerRadius: radii.full).stroke(colors.borderSoft, lineWidth: tone == .primary ? 0 : 1))
     }
 }
 
@@ -829,14 +915,20 @@ private func commentScore(_ comment: Comment) -> Int {
 }
 
 private func profileActivityMetaText(community: Community, created: String?) -> String {
+    let communityLabel = communityPresentationLabel(
+        communityId: community.communityId,
+        displayName: community.displayName,
+        routeSlug: community.routeSlug,
+        namespaceVerificationId: community.namespaceVerificationId
+    )
     guard let created, !created.isEmpty else {
-        return formatCommunityRouteLabel(communityId: community.communityId, routeSlug: community.routeSlug)
+        return communityLabel
     }
     let relative = profileActivityRelativeTime(from: created)
     guard !relative.isEmpty else {
-        return formatCommunityRouteLabel(communityId: community.communityId, routeSlug: community.routeSlug)
+        return communityLabel
     }
-    return "\(relative) · \(formatCommunityRouteLabel(communityId: community.communityId, routeSlug: community.routeSlug))"
+    return "\(relative) · \(communityLabel)"
 }
 
 private func profileActivityRelativeTime(from timestamp: String) -> String {

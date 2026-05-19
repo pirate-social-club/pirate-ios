@@ -1,9 +1,90 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
-private struct SubmitCommunityOption: Identifiable, Hashable {
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
+private struct SubmitCommunityCandidate {
     let id: String
     let displayName: String
-    let detail: String
+    let routeSlug: String?
+    let avatarRef: String?
+    let memberCount: Int?
+}
+
+private struct SubmitCommunityOption: Identifiable {
+    let id: String
+    let displayName: String
+    let routeSlug: String?
+    let avatarRef: String?
+    let memberCount: Int?
+    let accessLabel: String
+    let requiresProofOfWork: Bool
+
+    var routeLabel: String {
+        communityPresentationLabel(
+            communityId: id,
+            displayName: displayName,
+            routeSlug: routeSlug,
+            routeSlugImpliesVerified: true
+        )
+    }
+
+    var routeIsUnverified: Bool {
+        !isCommunityRouteVerified(routeSlug: routeSlug, routeSlugImpliesVerified: true)
+    }
+
+    var detail: String {
+        var parts = [accessLabel]
+        if requiresProofOfWork {
+            parts.append("Proof of work on publish")
+        }
+        if let memberCount {
+            parts.append("\(memberCount) members")
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
+private struct ComposerPickedFile: Identifiable {
+    let id = UUID()
+    let name: String
+    let mimeType: String
+    let data: Data
+    let sizeBytes: Int
+}
+
+private enum ComposerFileImportKind {
+    case image
+    case video
+    case audio
+    case songCover
+    case liveCover
+
+    var contentTypes: [UTType] {
+        switch self {
+        case .image, .songCover, .liveCover:
+            return [.image]
+        case .video:
+            return [.movie]
+        case .audio:
+            return [.audio]
+        }
+    }
+
+    var fallbackMimeType: String {
+        switch self {
+        case .image, .songCover, .liveCover:
+            return "image/jpeg"
+        case .video:
+            return "video/mp4"
+        case .audio:
+            return "audio/mpeg"
+        }
+    }
 }
 
 private enum ComposerPostType: String, CaseIterable, Identifiable {
@@ -39,8 +120,159 @@ private enum ComposerPostType: String, CaseIterable, Identifiable {
     }
 
     var isNativeSubmitEnabled: Bool {
-        self == .text || self == .link
+        self == .text || self == .link || self == .image
     }
+
+    var hasDetailsStep: Bool {
+        self == .video || self == .song
+    }
+
+    var bodyLabel: String {
+        switch self {
+        case .link:
+            return "Comment"
+        case .image, .video, .song:
+            return "Caption"
+        case .live:
+            return "Description"
+        case .text:
+            return "Body"
+        }
+    }
+
+    var bodyPlaceholder: String {
+        switch self {
+        case .text:
+            return "Body text (optional)"
+        case .link:
+            return "Add context (optional)"
+        case .image, .video, .song:
+            return "Caption (optional)"
+        case .live:
+            return "Describe the live room"
+        }
+    }
+
+    var titlePlaceholder: String {
+        switch self {
+        case .link:
+            return "Title (optional)"
+        case .song:
+            return "Post title"
+        case .live:
+            return "Live room title"
+        default:
+            return "Title"
+        }
+    }
+
+    var fileImportKind: ComposerFileImportKind? {
+        switch self {
+        case .image:
+            return .image
+        case .video:
+            return .video
+        case .song:
+            return .audio
+        case .text, .link, .live:
+            return nil
+        }
+    }
+
+    var fileButtonLabel: String {
+        switch self {
+        case .image:
+            return "Choose image"
+        case .video:
+            return "Choose video"
+        case .song:
+            return "Choose audio"
+        default:
+            return "Choose file"
+        }
+    }
+}
+
+private enum PostComposerStep: Int, CaseIterable {
+    case write
+    case details
+    case settings
+    case preview
+
+    func next(for postType: ComposerPostType) -> PostComposerStep {
+        switch self {
+        case .write:
+            return postType.hasDetailsStep ? .details : .settings
+        case .details:
+            return .settings
+        case .settings:
+            return .preview
+        case .preview:
+            return .preview
+        }
+    }
+
+    func previous(for postType: ComposerPostType) -> PostComposerStep? {
+        switch self {
+        case .write:
+            return nil
+        case .details:
+            return .write
+        case .settings:
+            return postType.hasDetailsStep ? .details : .write
+        case .preview:
+            return .settings
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .write:
+            return "Create post"
+        case .details:
+            return "Post details"
+        case .settings:
+            return "Post settings"
+        case .preview:
+            return "Preview post"
+        }
+    }
+}
+
+private func isPrivilegedCommunityStatus(_ status: String?) -> Bool {
+    status == "owner" || status == "admin" || status == "moderator"
+}
+
+private func hasCommunityPostingAccess(preview: CommunityPreview, eligibility: JoinEligibility?) -> Bool {
+    if eligibility?.status == "already_joined" { return true }
+    let status = preview.viewerMembershipStatus
+    return status == "member" || isPrivilegedCommunityStatus(status)
+}
+
+private func submitCommunityAccessLabel(preview: CommunityPreview, eligibility: JoinEligibility?) -> String {
+    if let status = preview.viewerMembershipStatus, isPrivilegedCommunityStatus(status) {
+        return status.split(separator: "_").map { $0.capitalized }.joined(separator: " ")
+    }
+    if eligibility?.status == "already_joined" || preview.viewerMembershipStatus == "member" {
+        return "Joined"
+    }
+    return "Eligible"
+}
+
+private func containsAltchaGate(_ summaries: [MembershipGateSummary]?) -> Bool {
+    (summaries ?? []).contains { $0.gateType == "altcha_pow" }
+}
+
+private func makeImage(from data: Data) -> Image? {
+    #if os(iOS)
+    guard let image = UIImage(data: data) else { return nil }
+    return Image(uiImage: image)
+    #elseif os(macOS)
+    guard let image = NSImage(data: data) else { return nil }
+    return Image(nsImage: image)
+    #else
+    return nil
+    #endif
 }
 
 private struct PublishedPostDestination: Identifiable, Hashable {
@@ -49,83 +281,95 @@ private struct PublishedPostDestination: Identifiable, Hashable {
 
 struct GlobalSubmitView: View {
     @Environment(\.pirateColors) private var colors
-    @Environment(\.pirateRadii) private var radii
+    @Environment(\.dismiss) private var dismiss
     var sessionManager: SessionManager
 
     @State private var communities: [SubmitCommunityOption] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
-    @State private var showSignIn = false
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                Text("Choose a community")
-                    .font(PirateTokens.Typography.h3)
-                    .foregroundStyle(colors.textPrimary)
-                    .padding(.horizontal, PirateTokens.pageGutter)
-                    .padding(.top, 16)
-
-                if isLoading {
-                    LoadingView().frame(height: 180)
-                } else if let errorMessage {
-                    ErrorView(message: errorMessage, retry: loadCommunities)
-                } else if communities.isEmpty {
-                    EmptyStateView(
-                        icon: "person.3",
-                        title: "No communities available",
-                        subtitle: "Join or create a community before posting."
-                    )
-                } else {
-                    ForEach(communities) { community in
-                        NavigationLink(value: PirateRoute.composePost(community.id)) {
-                            PirateCard {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "person.3")
-                                        .foregroundStyle(colors.accentBrand)
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(community.displayName)
-                                            .font(PirateTokens.Typography.bodyStrong)
-                                            .foregroundStyle(colors.textPrimary)
-                                        Text(community.detail)
-                                            .font(PirateTokens.Typography.small)
+        AuthGate(isAuthenticated: sessionManager.isAuthenticated, sessionManager: sessionManager) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    if isLoading {
+                        LoadingView().frame(height: 180)
+                    } else if let errorMessage {
+                        ErrorView(message: errorMessage, retry: loadCommunities)
+                    } else if communities.isEmpty {
+                        EmptyStateView(
+                            icon: "person.3",
+                            title: "No eligible communities",
+                            subtitle: "Join a community before creating a post."
+                        )
+                    } else {
+                        ForEach(communities) { community in
+                            NavigationLink(value: PirateRoute.composePost(community.id)) {
+                                PirateCard {
+                                    HStack(spacing: 12) {
+                                        AvatarView(
+                                            avatarRef: community.avatarRef,
+                                            size: 36,
+                                            fallbackLabel: community.displayName,
+                                            fallbackSeed: community.id
+                                        )
+                                        VStack(alignment: .leading, spacing: 5) {
+                                            HStack(spacing: 8) {
+                                                Text(community.displayName)
+                                                    .font(PirateTokens.Typography.bodyStrong)
+                                                    .foregroundStyle(colors.textPrimary)
+                                                    .lineLimit(1)
+                                                if community.requiresProofOfWork {
+                                                    PirateSystemIconView(systemName: "bolt.shield", size: 13)
+                                                        .font(.system(size: 13, weight: .semibold))
+                                                        .foregroundStyle(colors.accentWarning)
+                                                        .accessibilityLabel("Proof of work required")
+                                                }
+                                            }
+                                            CommunityNameLabel(
+                                                text: community.routeLabel,
+                                                isUnverified: community.routeIsUnverified,
+                                                font: PirateTokens.Typography.small,
+                                                color: colors.textSecondary,
+                                                iconSize: 12
+                                            )
+                                            Text(community.detail)
+                                                .font(PirateTokens.Typography.small)
+                                                .foregroundStyle(colors.textSecondary)
+                                                .lineLimit(2)
+                                        }
+                                        Spacer()
+                                        PirateSystemIconView(systemName: "chevron.right")
                                             .foregroundStyle(colors.textSecondary)
                                     }
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .foregroundStyle(colors.textSecondary)
                                 }
                             }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, PirateTokens.pageGutter)
                         }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, PirateTokens.pageGutter)
                     }
                 }
-
-                if !sessionManager.isAuthenticated {
+                .padding(.top, 12)
+            }
+            .background(colors.bgPage)
+            .navigationTitle("Communities")
+            .inlineNavigationBarTitle()
+            .navigationBarBackButtonHidden(true)
+            .tint(colors.textPrimary)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        showSignIn = true
+                        dismiss()
                     } label: {
-                        Text("Sign in to post")
-                            .font(PirateTokens.Typography.bodyStrong)
-                            .foregroundStyle(colors.textOnAccent)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: radii.full))
+                        PirateIconView(icon: .caretLeft, size: 22, color: colors.textPrimary)
+                            .frame(width: 34, height: 34)
                     }
                     .buttonStyle(.plain)
-                    .padding(.horizontal, PirateTokens.pageGutter)
-                    .padding(.top, 8)
+                    .accessibilityLabel("Back")
                 }
             }
-        }
-        .background(colors.bgPage)
-        .navigationTitle("Create post")
-        .inlineNavigationBarTitle()
-        .task { await loadCommunities() }
-        .refreshable { await loadCommunities() }
-        .sheet(isPresented: $showSignIn) {
-            SignInDrawer(sessionManager: sessionManager, isPresented: $showSignIn)
+            .task { await loadCommunities() }
+            .refreshable { await loadCommunities() }
         }
     }
 
@@ -133,29 +377,48 @@ struct GlobalSubmitView: View {
         isLoading = true
         errorMessage = nil
         do {
-            var next: [SubmitCommunityOption] = []
+            var candidates: [String: SubmitCommunityCandidate] = [:]
             if let handle = sessionManager.profile?.globalHandle?.label {
                 let profile = try? await ApiClient.shared.publicProfile(handle: handle)
-                next.append(contentsOf: (profile?.createdCommunities ?? []).map {
-                    SubmitCommunityOption(
-                        id: $0.id,
-                        displayName: $0.displayName,
-                        detail: $0.routeSlug.map { "c/\($0)" } ?? $0.id
+                for community in profile?.createdCommunities ?? [] {
+                    candidates[community.id] = SubmitCommunityCandidate(
+                        id: community.id,
+                        displayName: community.displayName,
+                        routeSlug: community.routeSlug,
+                        avatarRef: nil,
+                        memberCount: nil
                     )
-                })
+                }
             }
 
-            let feed = sessionManager.isAuthenticated
-                ? try await ApiClient.shared.homeFeed(sort: "best")
-                : try await ApiClient.shared.publicHomeFeed(sort: "best")
-            next.append(contentsOf: (feed.topCommunities ?? []).map {
-                SubmitCommunityOption(
-                    id: $0.id,
-                    displayName: $0.displayName,
-                    detail: "\($0.memberCount ?? 0) members"
+            let feed = try await ApiClient.shared.homeFeed(sort: "best")
+            for community in feed.topCommunities ?? [] {
+                candidates[community.id] = SubmitCommunityCandidate(
+                    id: community.id,
+                    displayName: community.displayName,
+                    routeSlug: community.routeSlug,
+                    avatarRef: community.avatarRef,
+                    memberCount: community.memberCount
                 )
-            })
-            communities = Array(Dictionary(grouping: next, by: \.id).compactMap { $0.value.first })
+            }
+            for item in feed.items {
+                let community = item.community
+                candidates[community.id] = SubmitCommunityCandidate(
+                    id: community.id,
+                    displayName: community.displayName,
+                    routeSlug: community.routeSlug,
+                    avatarRef: community.avatarRef,
+                    memberCount: community.memberCount
+                )
+            }
+
+            var eligible: [SubmitCommunityOption] = []
+            for candidate in candidates.values {
+                if let option = await eligibleSubmitOption(for: candidate) {
+                    eligible.append(option)
+                }
+            }
+            communities = eligible
                 .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
         } catch let error as ApiError {
             errorMessage = error.displayMessage
@@ -163,6 +426,27 @@ struct GlobalSubmitView: View {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    private func eligibleSubmitOption(for candidate: SubmitCommunityCandidate) async -> SubmitCommunityOption? {
+        do {
+            let preview = try await ApiClient.shared.community(id: candidate.id)
+            let eligibility = try? await ApiClient.shared.joinEligibility(communityId: candidate.id)
+            guard hasCommunityPostingAccess(preview: preview, eligibility: eligibility) else { return nil }
+
+            let isRole = isPrivilegedCommunityStatus(preview.viewerMembershipStatus)
+            return SubmitCommunityOption(
+                id: preview.community.id.isEmpty ? candidate.id : preview.community.id,
+                displayName: preview.community.displayName,
+                routeSlug: preview.community.routeSlug ?? candidate.routeSlug,
+                avatarRef: preview.community.avatarRef ?? candidate.avatarRef,
+                memberCount: preview.community.memberCount ?? candidate.memberCount,
+                accessLabel: submitCommunityAccessLabel(preview: preview, eligibility: eligibility),
+                requiresProofOfWork: !isRole && containsAltchaGate(preview.membershipGateSummaries)
+            )
+        } catch {
+            return nil
+        }
     }
 }
 
@@ -174,18 +458,43 @@ struct PostComposerView: View {
     let communityId: String
 
     @State private var postType = ComposerPostType.text
+    @State private var composerStep = PostComposerStep.write
     @State private var title = ""
     @State private var bodyText = ""
     @State private var linkUrl = ""
     @State private var audienceVisibility = "public"
     @State private var identityMode = "public"
+    @State private var imageFile: ComposerPickedFile?
+    @State private var videoFile: ComposerPickedFile?
+    @State private var songFile: ComposerPickedFile?
+    @State private var songCoverFile: ComposerPickedFile?
+    @State private var liveCoverFile: ComposerPickedFile?
+    @State private var songMode = "original"
+    @State private var songTitle = ""
+    @State private var songGenre = ""
+    @State private var songLanguage = ""
+    @State private var lyrics = ""
+    @State private var geniusAnnotationsUrl = ""
+    @State private var videoPosterFrameSeconds = "0"
+    @State private var monetizationEnabled = false
+    @State private var priceUsd = ""
+    @State private var liveRoomKind = "solo"
+    @State private var liveAccessMode = "free"
+    @State private var liveVisibility = "public"
+    @State private var liveScheduleForLater = false
+    @State private var liveScheduleAt = ""
+    @State private var liveGuestUserId = ""
+    @State private var liveSetlistTitle = ""
     @State private var communityPreview: CommunityPreview?
     @State private var eligibility: JoinEligibility?
     @State private var isChecking = true
     @State private var isSubmitting = false
     @State private var isJoining = false
+    @State private var isSolvingProofOfWork = false
     @State private var isLoadingLinkPreview = false
     @State private var linkPreview: LinkPreviewResponse?
+    @State private var fileImportKind: ComposerFileImportKind?
+    @State private var showingFileImporter = false
     @State private var errorMessage: String?
     @State private var publishedDestination: PublishedPostDestination?
 
@@ -205,12 +514,33 @@ struct PostComposerView: View {
         "\(postType.rawValue)|\(normalizedLinkUrl ?? "")"
     }
 
+    private var fileImporterContentTypes: [UTType] {
+        fileImportKind?.contentTypes ?? [.data]
+    }
+
     private var community: Community? {
         communityPreview?.community
     }
 
     private var communityDisplayName: String {
         community?.displayName ?? communityId
+    }
+
+    private var communityRouteLabel: String {
+        communityPresentationLabel(
+            communityId: community?.id ?? communityId,
+            displayName: communityDisplayName,
+            routeSlug: community?.routeSlug,
+            namespaceVerificationId: community?.namespaceVerificationId
+        )
+    }
+
+    private var communityRouteIsUnverified: Bool {
+        guard let community else { return false }
+        return !isCommunityRouteVerified(
+            routeSlug: community.routeSlug,
+            namespaceVerificationId: community.namespaceVerificationId
+        )
     }
 
     private var allowsAnonymousIdentity: Bool {
@@ -235,9 +565,16 @@ struct PostComposerView: View {
     }
 
     private var hasPostingAccess: Bool {
-        if eligibility?.status == "already_joined" { return true }
-        let membershipStatus = communityPreview?.viewerMembershipStatus
-        return membershipStatus == "member" || membershipStatus == "owner" || membershipStatus == "admin" || membershipStatus == "moderator"
+        guard let communityPreview else { return false }
+        return hasCommunityPostingAccess(preview: communityPreview, eligibility: eligibility)
+    }
+
+    private var hasPrivilegedPostingRole: Bool {
+        isPrivilegedCommunityStatus(communityPreview?.viewerMembershipStatus)
+    }
+
+    private var postRequiresProofOfWork: Bool {
+        !hasPrivilegedPostingRole && containsAltchaGate(communityPreview?.membershipGateSummaries)
     }
 
     private var hasDraft: Bool {
@@ -246,8 +583,17 @@ struct PostComposerView: View {
             return !trimmedTitle.isEmpty
         case .link:
             return normalizedLinkUrl != nil
-        case .image, .video, .song, .live:
-            return false
+        case .image:
+            return !trimmedTitle.isEmpty && imageFile != nil
+        case .video:
+            return !trimmedTitle.isEmpty && videoFile != nil
+        case .song:
+            return songFile != nil
+                && !resolvedSongTitle.isEmpty
+                && !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .live:
+            return !trimmedTitle.isEmpty
+                && !liveSetlistTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
@@ -255,8 +601,50 @@ struct PostComposerView: View {
         sessionManager.isAuthenticated
             && postType.isNativeSubmitEnabled
             && hasDraft
+            && hasPostingAccess
             && !isChecking
             && !isSubmitting
+    }
+
+    private var canAdvanceCurrentStep: Bool {
+        switch composerStep {
+        case .write:
+            return canAdvanceWriteStep
+        case .details:
+            if postType == .song {
+                return !resolvedSongTitle.isEmpty
+                    && !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            return true
+        case .settings:
+            return true
+        case .preview:
+            return canSubmit
+        }
+    }
+
+    private var canAdvanceWriteStep: Bool {
+        switch postType {
+        case .text:
+            return !trimmedTitle.isEmpty
+        case .link:
+            return normalizedLinkUrl != nil
+        case .image:
+            return !trimmedTitle.isEmpty && imageFile != nil
+        case .video:
+            return !trimmedTitle.isEmpty && videoFile != nil
+        case .song:
+            return songFile != nil
+        case .live:
+            return !trimmedTitle.isEmpty
+        }
+    }
+
+    private var resolvedSongTitle: String {
+        let explicit = songTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !explicit.isEmpty { return explicit }
+        if !trimmedTitle.isEmpty { return trimmedTitle }
+        return songFile?.name.replacingOccurrences(of: #"\.[^.]+$"#, with: "", options: .regularExpression) ?? ""
     }
 
     var body: some View {
@@ -264,32 +652,48 @@ struct PostComposerView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     communityPill
-                    postTypeTabs
                     accessStatus
-                    composerFields
-                    audienceSection
-                    identitySection
-
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .font(PirateTokens.Typography.caption)
-                            .foregroundStyle(colors.accentDanger)
-                    }
-
-                    publishButton
+                    stepContent
                 }
                 .padding(PirateTokens.pageGutter)
             }
             .background(colors.bgPage)
-            .navigationTitle("Create post")
+            .navigationTitle(composerStep.title)
             .inlineNavigationBarTitle()
+            .safeAreaInset(edge: .bottom) {
+                stepFooter
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    if let previous = composerStep.previous(for: postType) {
+                        Button {
+                            composerStep = previous
+                        } label: {
+                            PirateIconView(icon: .caretLeft, size: 22, color: colors.textPrimary)
+                                .frame(width: 34, height: 34)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Back")
+                    } else {
+                        Button {
+                            dismiss()
+                        } label: {
+                            PirateIconView(icon: .x, size: 22, color: colors.textPrimary)
+                                .frame(width: 34, height: 34)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Close")
+                    }
                 }
             }
             .task { await loadComposerContext() }
             .task(id: linkPreviewTaskKey) { await refreshLinkPreview() }
+            .fileImporter(
+                isPresented: $showingFileImporter,
+                allowedContentTypes: fileImporterContentTypes,
+                allowsMultipleSelection: false,
+                onCompletion: handleFileImport
+            )
             .navigationDestination(item: $publishedDestination) { destination in
                 PostView(sessionManager: sessionManager, postId: destination.id)
             }
@@ -304,13 +708,16 @@ struct PostComposerView: View {
                     Text("Posting in")
                         .font(PirateTokens.Typography.small)
                         .foregroundStyle(colors.textSecondary)
-                    Text("c/\(communityDisplayName)")
-                        .font(PirateTokens.Typography.bodyStrong)
-                        .foregroundStyle(colors.textPrimary)
-                        .lineLimit(1)
+                    CommunityNameLabel(
+                        text: communityRouteLabel,
+                        isUnverified: communityRouteIsUnverified,
+                        font: PirateTokens.Typography.bodyStrong,
+                        color: colors.textPrimary,
+                        iconSize: 14
+                    )
                 }
                 Spacer()
-                Image(systemName: "chevron.right")
+                PirateSystemIconView(systemName: "chevron.right", size: 13)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(colors.textSecondary)
             }
@@ -326,10 +733,13 @@ struct PostComposerView: View {
                 ForEach(ComposerPostType.allCases) { type in
                     Button {
                         postType = type
+                        if !type.hasDetailsStep && composerStep == .details {
+                            composerStep = .write
+                        }
                         errorMessage = nil
                     } label: {
                         HStack(spacing: 6) {
-                            Image(systemName: type.icon)
+                            PirateSystemIconView(systemName: type.icon, size: 14)
                                 .font(.system(size: 14, weight: .semibold))
                             Text(type.label)
                                 .font(PirateTokens.Typography.smallStrong)
@@ -349,6 +759,20 @@ struct PostComposerView: View {
                     .buttonStyle(.plain)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var stepContent: some View {
+        switch composerStep {
+        case .write:
+            writeStep
+        case .details:
+            detailsStep
+        case .settings:
+            settingsStep
+        case .preview:
+            previewStep
         }
     }
 
@@ -401,9 +825,11 @@ struct PostComposerView: View {
         }
     }
 
-    private var composerFields: some View {
+    private var writeStep: some View {
         VStack(alignment: .leading, spacing: 12) {
-            TextField(postType == .link ? "Title (optional)" : "Title", text: $title)
+            postTypeTabs
+
+            TextField(postType.titlePlaceholder, text: $title)
                 .textFieldStyle(.plain)
                 .font(PirateTokens.Typography.body)
                 .foregroundStyle(colors.textPrimary)
@@ -425,7 +851,15 @@ struct PostComposerView: View {
                 linkPreviewSection
             }
 
-            Text(postType == .link ? "Comment" : "Body")
+            if let importKind = postType.fileImportKind {
+                filePickerSection(kind: importKind)
+            }
+
+            if postType == .live {
+                liveWriteFields
+            }
+
+            Text(postType.bodyLabel)
                 .font(PirateTokens.Typography.label)
                 .foregroundStyle(colors.textPrimary)
 
@@ -438,11 +872,92 @@ struct PostComposerView: View {
                 .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.md))
                 .overlay(RoundedRectangle(cornerRadius: radii.md).stroke(colors.borderDefault, lineWidth: 1))
                 .disabled(isSubmitting)
+        }
+    }
+
+    @ViewBuilder
+    private var detailsStep: some View {
+        if postType == .video {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Video details")
+                    .font(PirateTokens.Typography.h3)
+                    .foregroundStyle(colors.textPrimary)
+                labeledTextField("Poster frame seconds", text: $videoPosterFrameSeconds, placeholder: "0")
+                statusCard(
+                    title: "Video publishing is next",
+                    message: "The native flow can collect and preview video posts. Uploading the video artifact still needs the web asset pipeline on iOS.",
+                    systemImage: "video",
+                    tone: .warning
+                )
+            }
+        } else if postType == .song {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Song details")
+                    .font(PirateTokens.Typography.h3)
+                    .foregroundStyle(colors.textPrimary)
+
+                Picker("Song mode", selection: $songMode) {
+                    Text("Original").tag("original")
+                    Text("Remix").tag("remix")
+                }
+                .pickerStyle(.segmented)
+
+                labeledTextField("Song title", text: $songTitle, placeholder: "Track title")
+                labeledTextField("Genre", text: $songGenre, placeholder: "Genre")
+                labeledTextField("Language", text: $songLanguage, placeholder: "Primary language")
+                labeledTextField("Genius annotations", text: $geniusAnnotationsUrl, placeholder: "https://")
+
+                Text("Lyrics")
+                    .font(PirateTokens.Typography.label)
+                    .foregroundStyle(colors.textPrimary)
+                TextEditor(text: $lyrics)
+                    .font(PirateTokens.Typography.body)
+                    .foregroundStyle(colors.textPrimary)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 160)
+                    .padding(8)
+                    .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.md))
+                    .overlay(RoundedRectangle(cornerRadius: radii.md).stroke(colors.borderDefault, lineWidth: 1))
+
+                auxiliaryFileButton(label: songCoverFile?.name ?? "Choose cover art", kind: .songCover, systemImage: "photo")
+                statusCard(
+                    title: "Song publishing is next",
+                    message: "The native flow can collect and preview song metadata. Uploading song artifacts still needs the web asset pipeline on iOS.",
+                    systemImage: "music.note",
+                    tone: .warning
+                )
+            }
+        }
+    }
+
+    private var settingsStep: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            audienceSection
+            identitySection
+
+            if postType == .song || postType == .video {
+                monetizationSection
+            }
+
+            if postRequiresProofOfWork {
+                statusCard(
+                    title: "Proof of work required",
+                    message: "Pirate will solve a short device proof before publishing, matching the web composer.",
+                    systemImage: "bolt.shield",
+                    tone: .warning
+                )
+            }
+        }
+    }
+
+    private var previewStep: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            previewCard
 
             if !postType.isNativeSubmitEnabled {
                 statusCard(
-                    title: "Native upload is next",
-                    message: "This tab is visible for parity with the web composer. Text and link publishing are wired in this build.",
+                    title: "Preview ready",
+                    message: "Native \(postType.label.lowercased()) publishing is not wired in this build yet.",
                     systemImage: "exclamationmark.triangle",
                     tone: .warning
                 )
@@ -463,6 +978,71 @@ struct PostComposerView: View {
         }
     }
 
+    private func filePickerSection(kind: ComposerFileImportKind) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                presentFileImporter(kind)
+            } label: {
+                HStack(spacing: 10) {
+                    PirateSystemIconView(systemName: postType.icon, size: 16)
+                        .font(.system(size: 16, weight: .semibold))
+                    Text(selectedFileLabel(for: postType) ?? postType.fileButtonLabel)
+                        .font(PirateTokens.Typography.bodyStrong)
+                    Spacer()
+                    PirateSystemIconView(systemName: "plus", size: 14)
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundStyle(colors.textPrimary)
+                .padding(12)
+                .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.md))
+                .overlay(RoundedRectangle(cornerRadius: radii.md).stroke(colors.borderDefault, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+
+            if let file = selectedPickedFile(for: postType) {
+                pickedFileCard(file)
+            }
+        }
+    }
+
+    private var liveWriteFields: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("Room kind", selection: $liveRoomKind) {
+                Text("Solo").tag("solo")
+                Text("Duet").tag("duet")
+            }
+            .pickerStyle(.segmented)
+
+            if liveRoomKind == "duet" {
+                labeledTextField("Guest performer", text: $liveGuestUserId, placeholder: "User id or handle")
+            }
+
+            Picker("Access", selection: $liveAccessMode) {
+                Text("Free").tag("free")
+                Text("Gated").tag("gated")
+                Text("Paid").tag("paid")
+            }
+            .pickerStyle(.segmented)
+
+            Picker("Visibility", selection: $liveVisibility) {
+                Text("Public").tag("public")
+                Text("Unlisted").tag("unlisted")
+            }
+            .pickerStyle(.segmented)
+
+            Toggle("Schedule for later", isOn: $liveScheduleForLater)
+                .font(PirateTokens.Typography.body)
+                .foregroundStyle(colors.textPrimary)
+
+            if liveScheduleForLater {
+                labeledTextField("Start time", text: $liveScheduleAt, placeholder: "YYYY-MM-DD HH:MM")
+            }
+
+            labeledTextField("Setlist item", text: $liveSetlistTitle, placeholder: "Song or segment title")
+            auxiliaryFileButton(label: liveCoverFile?.name ?? "Choose event cover", kind: .liveCover, systemImage: "photo")
+        }
+    }
+
     private var audienceSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Audience")
@@ -479,6 +1059,20 @@ struct PostComposerView: View {
                 .font(PirateTokens.Typography.caption)
                 .foregroundStyle(colors.textSecondary)
         }
+    }
+
+    private var monetizationSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Paid unlock", isOn: $monetizationEnabled)
+                .font(PirateTokens.Typography.body)
+                .foregroundStyle(colors.textPrimary)
+
+            if monetizationEnabled {
+                labeledTextField("Price", text: $priceUsd, placeholder: "1.00")
+            }
+        }
+        .padding(14)
+        .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.lg))
     }
 
     private var identitySection: some View {
@@ -524,25 +1118,49 @@ struct PostComposerView: View {
         return "your public profile"
     }
 
-    private var publishButton: some View {
-        Button {
-            Task { await submit() }
-        } label: {
-            HStack {
-                if isSubmitting {
-                    ProgressView().tint(colors.textOnAccent)
-                }
-                Text(isSubmitting ? "Posting..." : "Post")
+    private var stepFooter: some View {
+        VStack(spacing: 10) {
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(PirateTokens.Typography.caption)
+                    .foregroundStyle(colors.accentDanger)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .font(PirateTokens.Typography.bodyStrong)
-            .foregroundStyle(colors.textOnAccent)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: radii.full))
+
+            Button {
+                if composerStep == .preview {
+                    Task { await submit() }
+                } else {
+                    composerStep = composerStep.next(for: postType)
+                }
+            } label: {
+                HStack {
+                    if isSubmitting || isSolvingProofOfWork {
+                        ProgressView().tint(colors.textOnAccent)
+                    }
+                    Text(footerButtonTitle)
+                }
+                .font(PirateTokens.Typography.bodyStrong)
+                .foregroundStyle(colors.textOnAccent)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: radii.full))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canAdvanceCurrentStep)
+            .opacity(canAdvanceCurrentStep ? 1 : 0.55)
         }
-        .buttonStyle(.plain)
-        .disabled(!canSubmit)
-        .opacity(canSubmit ? 1 : 0.55)
+        .padding(.horizontal, PirateTokens.pageGutter)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .background(colors.bgPage)
+    }
+
+    private var footerButtonTitle: String {
+        if composerStep != .preview { return "Next" }
+        if isSolvingProofOfWork { return "Solving proof..." }
+        if isSubmitting { return "Posting..." }
+        return postRequiresProofOfWork ? "Solve proof & post" : "Post"
     }
 
     private enum StatusTone {
@@ -561,7 +1179,7 @@ struct PostComposerView: View {
         }()
 
         return HStack(alignment: .top, spacing: 12) {
-            Image(systemName: systemImage)
+            PirateSystemIconView(systemName: systemImage, size: 16)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(iconColor)
             VStack(alignment: .leading, spacing: 4) {
@@ -572,6 +1190,72 @@ struct PostComposerView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.lg))
+    }
+
+    private func labeledTextField(_ label: String, text: Binding<String>, placeholder: String) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(label)
+                .font(PirateTokens.Typography.label)
+                .foregroundStyle(colors.textPrimary)
+            TextField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(PirateTokens.Typography.body)
+                .foregroundStyle(colors.textPrimary)
+                .padding(12)
+                .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.md))
+                .overlay(RoundedRectangle(cornerRadius: radii.md).stroke(colors.borderDefault, lineWidth: 1))
+        }
+    }
+
+    private func auxiliaryFileButton(label: String, kind: ComposerFileImportKind, systemImage: String) -> some View {
+        Button {
+            presentFileImporter(kind)
+        } label: {
+            HStack(spacing: 10) {
+                PirateSystemIconView(systemName: systemImage)
+                Text(label)
+                Spacer()
+                PirateSystemIconView(systemName: "plus")
+            }
+            .font(PirateTokens.Typography.bodyStrong)
+            .foregroundStyle(colors.textPrimary)
+            .padding(12)
+            .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.md))
+            .overlay(RoundedRectangle(cornerRadius: radii.md).stroke(colors.borderDefault, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func pickedFileCard(_ file: ComposerPickedFile) -> some View {
+        HStack(spacing: 12) {
+            if postType == .image, let image = makeImage(from: file.data) {
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: radii.md))
+            } else {
+                PirateSystemIconView(systemName: postType.icon, size: 18)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(colors.accentBrand)
+                    .frame(width: 56, height: 56)
+                    .background(colors.surfaceSubtle, in: RoundedRectangle(cornerRadius: radii.md))
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(file.name)
+                    .font(PirateTokens.Typography.bodyStrong)
+                    .foregroundStyle(colors.textPrimary)
+                    .lineLimit(1)
+                Text("\(file.mimeType) · \(formattedBytes(file.sizeBytes))")
+                    .font(PirateTokens.Typography.small)
+                    .foregroundStyle(colors.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .background(colors.surfaceSubtle, in: RoundedRectangle(cornerRadius: radii.md))
     }
 
     private func linkPreviewCard(_ preview: LinkPreviewResponse) -> some View {
@@ -613,6 +1297,130 @@ struct PostComposerView: View {
         .overlay(RoundedRectangle(cornerRadius: radii.md).stroke(colors.borderDefault, lineWidth: 1))
     }
 
+    private var previewCard: some View {
+        PirateCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 10) {
+                    AvatarView(
+                        avatarRef: sessionManager.profile?.avatarRef,
+                        size: 34,
+                        fallbackLabel: publicIdentityLabel,
+                        fallbackSeed: sessionManager.profile?.userId
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(effectiveIdentityMode == "anonymous" ? "Anonymous" : publicIdentityLabel)
+                            .font(PirateTokens.Typography.bodyStrong)
+                            .foregroundStyle(colors.textPrimary)
+                        HStack(spacing: 4) {
+                            Text(resolvedVisibility == "public" ? "Public ·" : "Members ·")
+                                .font(PirateTokens.Typography.small)
+                                .foregroundStyle(colors.textSecondary)
+                            CommunityNameLabel(
+                                text: communityRouteLabel,
+                                isUnverified: communityRouteIsUnverified,
+                                font: PirateTokens.Typography.small,
+                                color: colors.textSecondary,
+                                iconSize: 12
+                            )
+                        }
+                    }
+                    Spacer()
+                }
+
+                if !trimmedTitle.isEmpty {
+                    Text(trimmedTitle)
+                        .font(PirateTokens.Typography.h3)
+                        .foregroundStyle(colors.textPrimary)
+                }
+
+                previewContent
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        switch postType {
+        case .text:
+            if !trimmedBody.isEmpty {
+                Text(trimmedBody)
+                    .font(PirateTokens.Typography.body)
+                    .foregroundStyle(colors.textPrimary)
+            }
+        case .link:
+            if let linkPreview {
+                linkPreviewCard(linkPreview)
+            } else {
+                Text(normalizedLinkUrl ?? linkUrl)
+                    .font(PirateTokens.Typography.body)
+                    .foregroundStyle(colors.accentBrand)
+            }
+            if !trimmedBody.isEmpty {
+                Text(trimmedBody)
+                    .font(PirateTokens.Typography.body)
+                    .foregroundStyle(colors.textPrimary)
+            }
+        case .image:
+            if let file = imageFile, let image = makeImage(from: file.data) {
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 260)
+                    .clipShape(RoundedRectangle(cornerRadius: radii.lg))
+            }
+            if !trimmedBody.isEmpty {
+                Text(trimmedBody)
+                    .font(PirateTokens.Typography.body)
+                    .foregroundStyle(colors.textPrimary)
+            }
+        case .video:
+            mediaPreviewPlaceholder(
+                systemImage: "play.rectangle.fill",
+                title: videoFile?.name ?? "Video",
+                subtitle: monetizationEnabled ? priceLabel : "Free"
+            )
+        case .song:
+            mediaPreviewPlaceholder(
+                systemImage: "music.note",
+                title: resolvedSongTitle.isEmpty ? "Untitled track" : resolvedSongTitle,
+                subtitle: songMode.capitalized
+            )
+        case .live:
+            mediaPreviewPlaceholder(
+                systemImage: "antenna.radiowaves.left.and.right",
+                title: trimmedTitle.isEmpty ? "Live event" : trimmedTitle,
+                subtitle: "\(liveAccessMode.capitalized) · \(liveVisibility.capitalized)"
+            )
+            if !liveSetlistTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("Setlist: \(liveSetlistTitle)")
+                    .font(PirateTokens.Typography.caption)
+                    .foregroundStyle(colors.textSecondary)
+            }
+        }
+    }
+
+    private func mediaPreviewPlaceholder(systemImage: String, title: String, subtitle: String) -> some View {
+        HStack(spacing: 12) {
+            PirateSystemIconView(systemName: systemImage, size: 24)
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(colors.accentBrand)
+                .frame(width: 58, height: 58)
+                .background(colors.surfaceSubtle, in: RoundedRectangle(cornerRadius: radii.lg))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(PirateTokens.Typography.bodyStrong)
+                    .foregroundStyle(colors.textPrimary)
+                Text(subtitle)
+                    .font(PirateTokens.Typography.small)
+                    .foregroundStyle(colors.textSecondary)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.lg))
+    }
+
     private func loadComposerContext() async {
         isChecking = true
         errorMessage = nil
@@ -635,7 +1443,26 @@ struct PostComposerView: View {
         isJoining = true
         errorMessage = nil
         do {
-            _ = try await ApiClient.shared.joinCommunity(communityId: communityId)
+            let currentEligibility: JoinEligibility?
+            if let eligibility {
+                currentEligibility = eligibility
+            } else {
+                currentEligibility = try? await ApiClient.shared.joinEligibility(communityId: communityId)
+            }
+            let altchaPayload: String?
+            if currentEligibility?.missingCapabilities?.contains("altcha_pow") == true {
+                let communityRef = currentEligibility?.communityId.hasPrefix("com_") == true
+                    ? (currentEligibility?.communityId ?? communityId)
+                    : "com_\(currentEligibility?.communityId ?? communityId)"
+                let challenge = try await ApiClient.shared.createAltchaChallenge(
+                    scope: "community_join",
+                    action: "community:\(communityRef)"
+                )
+                altchaPayload = try await AltchaSolver.solve(challenge).payload
+            } else {
+                altchaPayload = nil
+            }
+            _ = try await ApiClient.shared.joinCommunity(communityId: communityId, altchaPayload: altchaPayload)
             await loadComposerContext()
         } catch let error as ApiError {
             errorMessage = error.displayMessage
@@ -643,6 +1470,59 @@ struct PostComposerView: View {
             errorMessage = error.localizedDescription
         }
         isJoining = false
+    }
+
+    private func presentFileImporter(_ kind: ComposerFileImportKind) {
+        fileImportKind = kind
+        showingFileImporter = true
+        errorMessage = nil
+    }
+
+    private func handleFileImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first, let kind = fileImportKind else { return }
+            Task { await loadPickedFile(url: url, kind: kind) }
+        case .failure(let error):
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadPickedFile(url: URL, kind: ComposerFileImportKind) async {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessing {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let mimeType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? kind.fallbackMimeType
+            let file = ComposerPickedFile(
+                name: url.lastPathComponent,
+                mimeType: mimeType,
+                data: data,
+                sizeBytes: data.count
+            )
+            switch kind {
+            case .image:
+                imageFile = file
+            case .video:
+                videoFile = file
+            case .audio:
+                songFile = file
+                if songTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    songTitle = file.name.replacingOccurrences(of: #"\.[^.]+$"#, with: "", options: .regularExpression)
+                }
+            case .songCover:
+                songCoverFile = file
+            case .liveCover:
+                liveCoverFile = file
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func refreshLinkPreview() async {
@@ -674,6 +1554,10 @@ struct PostComposerView: View {
             errorMessage = "Join this community before posting."
             return
         }
+        guard postType.isNativeSubmitEnabled else {
+            errorMessage = "Native \(postType.label.lowercased()) publishing is not wired in this build yet."
+            return
+        }
         guard canSubmit else { return }
 
         let linkUrlForRequest: String?
@@ -689,14 +1573,25 @@ struct PostComposerView: View {
 
         isSubmitting = true
         errorMessage = nil
+        defer {
+            isSubmitting = false
+            isSolvingProofOfWork = false
+        }
+
         do {
+            let mediaRefs = try await uploadMediaRefsIfNeeded()
+            let altchaPayload = try await resolvePostAltchaPayloadIfNeeded()
             let identity = effectiveIdentityMode
+            let bodyForRequest = (postType == .text || postType == .link) ? trimmedBody : ""
+            let captionForRequest = postType == .image ? trimmedBody : ""
             let request = CreatePostRequest(
                 idempotencyKey: UUID().uuidString,
                 title: trimmedTitle.isEmpty ? nil : trimmedTitle,
-                body: trimmedBody.isEmpty ? nil : trimmedBody,
+                body: bodyForRequest.isEmpty ? nil : bodyForRequest,
+                caption: captionForRequest.isEmpty ? nil : captionForRequest,
                 postType: postType.rawValue,
                 linkUrl: linkUrlForRequest,
+                mediaRefs: mediaRefs,
                 ageGatePolicy: "none",
                 flairId: nil,
                 identityMode: identity,
@@ -705,14 +1600,43 @@ struct PostComposerView: View {
                 translationPolicy: "machine_allowed",
                 visibility: resolvedVisibility
             )
-            let createdPost = try await ApiClient.shared.createPost(communityId: communityId, body: request)
+            let createdPost = try await ApiClient.shared.createPost(communityId: communityId, body: request, altchaPayload: altchaPayload)
             publishedDestination = PublishedPostDestination(id: createdPost.id)
         } catch let error as ApiError {
             errorMessage = error.displayMessage
         } catch {
             errorMessage = error.localizedDescription
         }
-        isSubmitting = false
+    }
+
+    private func uploadMediaRefsIfNeeded() async throws -> [MediaRef]? {
+        guard postType == .image else { return nil }
+        guard let imageFile else {
+            throw ApiError.serverError(statusCode: 0, message: "Choose an image before posting.", code: nil, retryable: false)
+        }
+        let uploaded = try await ApiClient.shared.uploadCommunityMedia(
+            kind: "post_image",
+            data: imageFile.data,
+            filename: imageFile.name,
+            mimeType: imageFile.mimeType
+        )
+        return [
+            MediaRef(
+                storageRef: uploaded.mediaRef,
+                mimeType: uploaded.mimeType,
+                sizeBytes: uploaded.sizeBytes ?? imageFile.sizeBytes
+            )
+        ]
+    }
+
+    private func resolvePostAltchaPayloadIfNeeded() async throws -> String? {
+        guard postRequiresProofOfWork else { return nil }
+        isSolvingProofOfWork = true
+        let challenge = try await ApiClient.shared.createAltchaChallenge(
+            scope: "post_create",
+            action: "community:\(communityId)"
+        )
+        return try await AltchaSolver.solve(challenge).payload
     }
 
     private func applyCommunityInvariants(_ community: Community) {
@@ -777,6 +1701,36 @@ struct PostComposerView: View {
 
     private func matches(_ value: String, _ pattern: String) -> Bool {
         value.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    private func selectedPickedFile(for type: ComposerPostType) -> ComposerPickedFile? {
+        switch type {
+        case .image:
+            return imageFile
+        case .video:
+            return videoFile
+        case .song:
+            return songFile
+        case .text, .link, .live:
+            return nil
+        }
+    }
+
+    private func selectedFileLabel(for type: ComposerPostType) -> String? {
+        selectedPickedFile(for: type)?.name
+    }
+
+    private func formattedBytes(_ value: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(value))
+    }
+
+    private var priceLabel: String {
+        let trimmed = priceUsd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Free" }
+        return trimmed.hasPrefix("$") ? trimmed : "$\(trimmed)"
     }
 }
 
@@ -963,7 +1917,7 @@ struct YourCommunitiesView: View {
                                                 .foregroundStyle(colors.textSecondary)
                                         }
                                         Spacer()
-                                        Image(systemName: "chevron.right").foregroundStyle(colors.textSecondary)
+                                        PirateSystemIconView(systemName: "chevron.right").foregroundStyle(colors.textSecondary)
                                     }
                                 }
                             }
@@ -1047,9 +2001,390 @@ struct UserProfileView: View {
     }
 }
 
+private enum SelfVerificationScreenState {
+    case notStarted
+    case pending
+    case verified
+}
+
+struct SelfVerificationView: View {
+    var sessionManager: SessionManager
+    let intent: String
+    var requestedCapabilities: [String] = ["unique_human"]
+    var verificationRequirements: [VerificationRequirement] = []
+
+    var body: some View {
+        AuthGate(isAuthenticated: sessionManager.isAuthenticated, sessionManager: sessionManager) {
+            SelfVerificationFlowContent(
+                sessionManager: sessionManager,
+                intent: intent,
+                requestedCapabilities: requestedCapabilities,
+                verificationRequirements: verificationRequirements
+            )
+            .navigationTitle("Verify with ID")
+        }
+    }
+}
+
+struct SelfVerificationDrawer: View {
+    var sessionManager: SessionManager
+    let intent: String
+    var requestedCapabilities: [String] = ["unique_human"]
+    var verificationRequirements: [VerificationRequirement] = []
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        AuthGate(isAuthenticated: sessionManager.isAuthenticated, sessionManager: sessionManager) {
+            SelfVerificationFlowContent(
+                sessionManager: sessionManager,
+                intent: intent,
+                requestedCapabilities: requestedCapabilities,
+                verificationRequirements: verificationRequirements,
+                onClose: { isPresented = false }
+            )
+        }
+        .presentationDetents([.height(340)])
+        .presentationDragIndicator(.visible)
+    }
+}
+
+private struct SelfVerificationFlowContent: View {
+    @Environment(\.pirateColors) private var colors
+    @Environment(\.pirateRadii) private var radii
+    @Environment(\.openURL) private var openURL
+    var sessionManager: SessionManager
+    let intent: String
+    var requestedCapabilities: [String]
+    var verificationRequirements: [VerificationRequirement]
+    var onClose: (() -> Void)?
+
+    @State private var coordinator = VerificationCoordinator.shared
+    @State private var session: VerificationSession?
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    @State private var screenState: SelfVerificationScreenState = .notStarted
+    @State private var completingSessionId: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 12) {
+                            Circle()
+                                .fill(colors.surfaceAccent)
+                                .frame(width: 52, height: 52)
+                                .overlay(
+                                    PirateIconView(icon: .identificationCard, filled: true, size: 26, color: colors.accentBrand)
+                                )
+                            Text("Verify with ID")
+                                .font(PirateTokens.Typography.h2)
+                                .foregroundStyle(colors.textPrimary)
+                        }
+                        Text(descriptionText)
+                            .font(PirateTokens.Typography.body)
+                            .foregroundStyle(colors.textSecondary)
+                    }
+                    Spacer()
+                    if let onClose {
+                        Button {
+                            onClose()
+                        } label: {
+                            PirateIconView(icon: .x, size: 16, color: colors.textSecondary)
+                                .frame(width: 34, height: 34)
+                                .background(colors.surfaceSubtle, in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                if let errorMessage {
+                    statusNote(errorMessage, color: colors.accentDanger)
+                }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    switch screenState {
+                    case .verified:
+                        statusNote("Verification complete.", color: colors.accentSuccess)
+                    case .pending:
+                        statusNote("Complete the Self flow, then return here.", color: colors.textSecondary)
+                        Button {
+                            Task { await reopenVerification() }
+                        } label: {
+                            buttonLabel(isLoading ? "Opening..." : "Reopen Self")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isLoading)
+                    case .notStarted:
+                        Button {
+                            Task { await start() }
+                        } label: {
+                            buttonLabel(isLoading ? "Opening..." : "Open Self")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isLoading)
+                    }
+                }
+
+                appDownloadSection
+            }
+            .padding(PirateTokens.pageGutter)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .task {
+                await checkExistingVerification()
+            }
+            .task(id: coordinator.callbackResult) {
+                guard let result = coordinator.callbackResult else { return }
+                await handleCallback(result)
+            }
+        }
+        .background(colors.bgPage)
+    }
+
+    private var descriptionText: String {
+        if verificationRequirements.contains(where: { $0.proofType == "nationality" }) {
+            return "Self.xyz lets you prove your nationality without sharing your name, photo, or document details with anyone."
+        }
+        if verificationRequirements.contains(where: { $0.proofType == "minimum_age" }) || requestedCapabilities.contains("age_over_18") {
+            return "Self.xyz lets you prove your age without sharing your name, photo, or document details with anyone."
+        }
+        if requestedCapabilities.contains("gender") {
+            return "Self.xyz lets you prove facts from your ID without sharing your name, photo, or document details with anyone."
+        }
+        return "Self.xyz lets you prove facts like age and nationality without sharing your name, photo, or document details with anyone."
+    }
+
+    private func statusNote(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(PirateTokens.Typography.body)
+            .foregroundStyle(color)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(colors.surfaceSubtle, in: RoundedRectangle(cornerRadius: radii.md))
+    }
+
+    private var appDownloadSection: some View {
+        Link(destination: selfAppStoreURL) {
+            outlineButtonLabel("Install Self")
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var selfAppStoreURL: URL {
+        URL(string: "https://apps.apple.com/us/app/self-zk-passport-identity/id6478563710")!
+    }
+
+    private func buttonLabel(_ title: String) -> some View {
+        HStack {
+            if isLoading { ProgressView().tint(colors.textOnAccent) }
+            Text(title)
+        }
+        .font(PirateTokens.Typography.bodyStrong)
+        .foregroundStyle(colors.textOnAccent)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: radii.full))
+    }
+
+    private func outlineButtonLabel(_ title: String) -> some View {
+        HStack(spacing: 8) {
+            PirateIconView(icon: .arrowSquareOut, size: 16, color: colors.textPrimary)
+            Text(title)
+        }
+        .font(PirateTokens.Typography.bodyStrong)
+        .foregroundStyle(colors.textPrimary)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.full))
+        .overlay(
+            RoundedRectangle(cornerRadius: radii.full)
+                .stroke(colors.borderDefault, lineWidth: 1)
+        )
+    }
+
+    private func start() async {
+        isLoading = true
+        errorMessage = nil
+        do {
+            let createdSession = try await ApiClient.shared.startVerificationSession(sessionRequest: StartVerificationSessionRequest(
+                provider: "self",
+                providerMode: "qr_deeplink",
+                requestedCapabilities: normalizedRequestedCapabilities,
+                verificationRequirements: normalizedVerificationRequirements,
+                verificationIntent: intent
+            ))
+            coordinator.savePendingSession(PendingVerificationSession(
+                provider: "self",
+                verificationSessionId: createdSession.id
+            ))
+
+            guard let callbackURL = VerificationCoordinator.buildCallbackURL(
+                verificationSessionId: createdSession.id,
+                provider: "self"
+            ) else {
+                coordinator.clearPendingSession()
+                throw SelfVerificationError(message: "Could not build Self callback link.")
+            }
+
+            let launchResult = SelfVerificationLaunchBuilder.buildLaunchURL(
+                from: createdSession.launch,
+                callbackURL: callbackURL
+            )
+            guard let launchURL = launchResult.url else {
+                coordinator.clearPendingSession()
+                throw SelfVerificationError(message: "Could not build verification link. Please try again.")
+            }
+
+            session = createdSession
+            screenState = .pending
+            openSelf(launchURL)
+        } catch let error as ApiError {
+            errorMessage = startErrorMessage(for: error)
+        } catch let error as SelfVerificationError {
+            errorMessage = error.message
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private var normalizedRequestedCapabilities: [String]? {
+        let allowed = ["unique_human", "age_over_18", "nationality", "gender"]
+        let values = requestedCapabilities.filter { allowed.contains($0) }
+        return values.isEmpty && verificationRequirements.isEmpty ? ["unique_human"] : values
+    }
+
+    private var normalizedVerificationRequirements: [VerificationRequirement]? {
+        verificationRequirements.isEmpty ? nil : verificationRequirements
+    }
+
+    private func checkExistingVerification() async {
+        guard screenState == .notStarted, !isLoading else { return }
+        do {
+            let status = try await ApiClient.shared.onboardingStatus()
+            if status.uniqueHumanVerificationStatus == "verified" {
+                screenState = .verified
+            }
+        } catch {
+            // The verification screen can still start a fresh Self session if status refresh fails.
+        }
+    }
+
+    private func reopenVerification() async {
+        guard let sessionId = session?.id ?? coordinator.readPendingSession()?.verificationSessionId else { return }
+        isLoading = true
+        errorMessage = nil
+        do {
+            let refreshedSession = try await ApiClient.shared.verificationSession(id: sessionId)
+            coordinator.savePendingSession(PendingVerificationSession(provider: "self", verificationSessionId: sessionId))
+            guard let callbackURL = VerificationCoordinator.buildCallbackURL(verificationSessionId: sessionId, provider: "self") else {
+                throw SelfVerificationError(message: "Could not build Self callback link.")
+            }
+            let launchResult = SelfVerificationLaunchBuilder.buildLaunchURL(from: refreshedSession.launch, callbackURL: callbackURL)
+            guard let launchURL = launchResult.url else {
+                throw SelfVerificationError(message: "Could not build verification link. Please try again.")
+            }
+            session = refreshedSession
+            screenState = .pending
+            openSelf(launchURL)
+        } catch let error as ApiError {
+            errorMessage = startErrorMessage(for: error)
+        } catch let error as SelfVerificationError {
+            errorMessage = error.message
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func handleCallback(_ result: VerificationCallbackResult) async {
+        guard result.provider == "self" else { return }
+
+        switch result {
+        case .completed(_, let verificationSessionId, let proof):
+            await completeVerification(sessionId: verificationSessionId ?? session?.id, proof: proof)
+        case .expired:
+            coordinator.clearPendingSession()
+            coordinator.clearCallbackResult()
+            screenState = .notStarted
+            errorMessage = "Verification session expired. Please try again."
+        case .failed(_, _, let reason):
+            coordinator.clearPendingSession()
+            coordinator.clearCallbackResult()
+            screenState = .notStarted
+            errorMessage = reason
+        }
+    }
+
+    private func completeVerification(sessionId: String?, proof: String) async {
+        guard let sessionId else { return }
+        if completingSessionId == sessionId { return }
+        completingSessionId = sessionId
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            let completedSession = try await ApiClient.shared.completeVerificationSession(
+                id: sessionId,
+                request: CompleteVerificationSessionRequest(proof: proof)
+            )
+            session = completedSession
+            coordinator.clearCallbackResult()
+            coordinator.clearPendingSession()
+
+            switch completedSession.status {
+            case "verified":
+                screenState = .verified
+                await sessionManager.refreshProfile()
+            case "expired":
+                screenState = .notStarted
+                errorMessage = "Verification session expired. Please try again."
+            case "failed":
+                screenState = .notStarted
+                errorMessage = "Could not complete verification."
+            default:
+                screenState = .pending
+            }
+        } catch let error as ApiError {
+            completingSessionId = nil
+            errorMessage = error.displayMessage
+        } catch {
+            completingSessionId = nil
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func openSelf(_ url: URL) {
+        openURL(url) { accepted in
+            if !accepted {
+                errorMessage = "Self is not installed. Download it from the App Store."
+            }
+        }
+    }
+
+    private func startErrorMessage(for error: ApiError) -> String {
+        guard case .serverError(let statusCode, _, let code, _, _) = error else {
+            return error.displayMessage
+        }
+        if code == "provider_unavailable" || statusCode == 501 || statusCode == 502 {
+            return "Verification provider is temporarily unavailable. Please try again later."
+        }
+        if code == "internal_error" || statusCode >= 500 {
+            return "Could not start ID verification. Please try again."
+        }
+        return error.displayMessage
+    }
+}
+
+private struct SelfVerificationError: Error {
+    let message: String
+}
+
 struct VerificationView: View {
     @Environment(\.pirateColors) private var colors
     @Environment(\.pirateRadii) private var radii
+    @Environment(\.openURL) private var openURL
     var sessionManager: SessionManager
     let provider: String
     let intent: String
@@ -1061,31 +2396,55 @@ struct VerificationView: View {
     var body: some View {
         AuthGate(isAuthenticated: sessionManager.isAuthenticated, sessionManager: sessionManager) {
             VStack(alignment: .leading, spacing: 16) {
-                Text(provider == "very" ? "Very verification" : "Self verification")
-                    .font(PirateTokens.Typography.h2)
-                    .foregroundStyle(colors.textPrimary)
-                Text("Intent: \(intent)")
-                    .font(PirateTokens.Typography.caption)
-                    .foregroundStyle(colors.textSecondary)
+                HStack(alignment: .center, spacing: 14) {
+                    Circle()
+                        .fill(colors.surfaceAccent)
+                        .frame(width: 52, height: 52)
+                        .overlay(
+                            PirateIconView(
+                                icon: provider == "very" ? .handPalm : .checkCircle,
+                                filled: true,
+                                size: 28,
+                                color: colors.textPrimary
+                            )
+                        )
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(provider == "very" ? "Prove you're human" : "Verification")
+                            .font(PirateTokens.Typography.h2)
+                            .foregroundStyle(colors.textPrimary)
+                        Text(provider == "very" ? "Use Very to scan your palm. The photo is not saved or stored." : "Complete verification to continue.")
+                            .font(PirateTokens.Typography.caption)
+                            .foregroundStyle(colors.textSecondary)
+                    }
+                }
 
                 if let session {
                     PirateCard {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Status: \(session.status ?? "pending")")
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(statusTitle(for: session))
                                 .font(PirateTokens.Typography.bodyStrong)
                                 .foregroundStyle(colors.textPrimary)
-                            Text(session.id)
-                                .font(PirateTokens.Typography.small)
+                            Text(statusDescription(for: session))
+                                .font(PirateTokens.Typography.caption)
                                 .foregroundStyle(colors.textSecondary)
-                                .textSelection(.enabled)
-                            if let url = launchURL(from: session), let launchURL = URL(string: url) {
-                                Link("Open verification", destination: launchURL)
-                                    .font(PirateTokens.Typography.bodyStrong)
-                                    .foregroundStyle(colors.textOnAccent)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                                    .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: radii.full))
+
+                            if launchURL(from: session) != nil {
+                                Button {
+                                    openLaunchURL(for: session)
+                                } label: {
+                                    verificationButtonLabel(provider == "very" ? "Open Very" : "Open verification", loading: false)
+                                }
+                                .buttonStyle(.plain)
                             }
+
+                            Button {
+                                Task { await refreshSession() }
+                            } label: {
+                                verificationOutlineButtonLabel(isLoading ? "Checking..." : "Check status")
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isLoading)
                         }
                     }
                 }
@@ -1099,25 +2458,24 @@ struct VerificationView: View {
                 Button {
                     Task { await start() }
                 } label: {
-                    HStack {
-                        if isLoading { ProgressView().tint(colors.textOnAccent) }
-                        Text(isLoading ? "Starting..." : "Start verification")
-                    }
-                    .font(PirateTokens.Typography.bodyStrong)
-                    .foregroundStyle(colors.textOnAccent)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: radii.full))
+                    verificationButtonLabel(
+                        isLoading ? "Starting..." : (provider == "very" ? "Verify" : "Start verification"),
+                        loading: isLoading
+                    )
                 }
                 .buttonStyle(.plain)
                 .disabled(isLoading)
+
+                if let download = mobileAppDownload {
+                    appDownloadSection(download)
+                }
 
                 Spacer()
             }
             .padding(PirateTokens.pageGutter)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(colors.bgPage)
-            .navigationTitle("Verification")
+            .navigationTitle(provider == "very" ? "Palm scan" : "Verification")
         }
     }
 
@@ -1125,12 +2483,35 @@ struct VerificationView: View {
         isLoading = true
         errorMessage = nil
         do {
-            session = try await ApiClient.shared.startVerificationSession(sessionRequest: StartVerificationSessionRequest(
+            let createdSession = try await ApiClient.shared.startVerificationSession(sessionRequest: StartVerificationSessionRequest(
                 provider: provider,
-                providerMode: provider == "self" ? "qr_deeplink" : nil,
-                requestedCapabilities: provider == "self" ? ["unique_human"] : nil,
+                providerMode: nil,
+                requestedCapabilities: nil,
                 verificationIntent: intent
             ))
+            session = createdSession
+            openLaunchURL(for: createdSession)
+        } catch let error as ApiError {
+            errorMessage = startErrorMessage(for: error)
+            if shouldOpenInstallFallback(for: error) {
+                openMobileAppStore()
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func refreshSession() async {
+        guard let id = session?.id else { return }
+        isLoading = true
+        errorMessage = nil
+        do {
+            let refreshed = try await ApiClient.shared.verificationSession(id: id)
+            session = refreshed
+            if refreshed.status == "verified" {
+                await sessionManager.refreshProfile()
+            }
         } catch let error as ApiError {
             errorMessage = error.displayMessage
         } catch {
@@ -1139,11 +2520,149 @@ struct VerificationView: View {
         isLoading = false
     }
 
+    private func openLaunchURL(for session: VerificationSession) {
+        guard let rawURL = launchURL(from: session), let url = URL(string: rawURL) else {
+            if provider == "very" {
+                errorMessage = "Very launch data was not returned yet. Install VeryAI from the App Store, then try again."
+                openMobileAppStore()
+            }
+            return
+        }
+        openURL(url) { accepted in
+            if !accepted {
+                if provider == "very" {
+                    errorMessage = "Could not open VeryAI. Install it from the App Store, then try again."
+                    openMobileAppStore()
+                } else {
+                    errorMessage = "Could not open verification."
+                }
+            }
+        }
+    }
+
+    private func statusTitle(for session: VerificationSession) -> String {
+        switch session.status {
+        case "verified":
+            return "Verified"
+        case "failed":
+            return "Verification failed"
+        case "expired":
+            return "Session expired"
+        default:
+            return provider == "very" ? "Finish your palm scan" : "Verification pending"
+        }
+    }
+
+    private func statusDescription(for session: VerificationSession) -> String {
+        switch session.status {
+        case "verified":
+            return "You're verified. New onboarding tasks should clear after notifications refresh."
+        case "failed":
+            return "Start a new verification session and try again."
+        case "expired":
+            return "This verification session expired. Start a new one to continue."
+        default:
+            return provider == "very"
+                ? "Complete the scan in VeryAI, then return here and check status."
+                : "Complete the provider flow, then return here and check status."
+        }
+    }
+
+    private var mobileAppDownload: VerificationMobileAppDownload? {
+        switch provider {
+        case "very":
+            return VerificationMobileAppDownload(
+                appName: "VeryAI",
+                iosURL: URL(string: "https://apps.apple.com/us/app/veryai-proof-of-reality/id6746761869")
+            )
+        case "self":
+            return VerificationMobileAppDownload(
+                appName: "Self",
+                iosURL: URL(string: "https://apps.apple.com/us/app/self-zk-passport-identity/id6478563710")
+            )
+        default:
+            return nil
+        }
+    }
+
+    private func appDownloadSection(_ download: VerificationMobileAppDownload) -> some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 12) {
+                Rectangle()
+                    .fill(colors.borderSoft)
+                    .frame(height: 1)
+                Text("Need the \(download.appName) app?")
+                    .font(PirateTokens.Typography.caption)
+                    .foregroundStyle(colors.textSecondary)
+                    .lineLimit(1)
+                Rectangle()
+                    .fill(colors.borderSoft)
+                    .frame(height: 1)
+            }
+
+            if let iosURL = download.iosURL {
+                Link(destination: iosURL) {
+                    verificationOutlineButtonLabel("App Store")
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func startErrorMessage(for error: ApiError) -> String {
+        guard provider == "very", shouldOpenInstallFallback(for: error) else {
+            return error.displayMessage
+        }
+        return "We could not start VeryAI from Pirate yet. Install VeryAI from the App Store, then try again."
+    }
+
+    private func shouldOpenInstallFallback(for error: ApiError) -> Bool {
+        guard provider == "very", !error.isAuthError else { return false }
+        guard case .serverError(let statusCode, _, let code, _, _) = error else { return false }
+        return code == "internal_error" || code == "provider_unavailable" || statusCode == 501 || statusCode == 502
+    }
+
+    private func openMobileAppStore() {
+        guard let url = mobileAppDownload?.iosURL else { return }
+        openURL(url)
+    }
+
+    private func verificationButtonLabel(_ title: String, loading: Bool) -> some View {
+        HStack {
+            if loading { ProgressView().tint(colors.textOnAccent) }
+            Text(title)
+        }
+        .font(PirateTokens.Typography.bodyStrong)
+        .foregroundStyle(colors.textOnAccent)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: radii.full))
+    }
+
+    private func verificationOutlineButtonLabel(_ title: String) -> some View {
+        Text(title)
+            .font(PirateTokens.Typography.bodyStrong)
+            .foregroundStyle(colors.textPrimary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: radii.full))
+            .overlay(
+                RoundedRectangle(cornerRadius: radii.full)
+                    .stroke(colors.borderDefault, lineWidth: 1)
+            )
+    }
+
     private func launchURL(from session: VerificationSession) -> String? {
         guard let launch = session.launch else { return nil }
-        return firstStringValue(named: "verify_url", in: launch)
-            ?? firstStringValue(named: "deeplink_callback", in: launch)
-            ?? firstStringValue(named: "url", in: launch)
+        let keys = provider == "very"
+            ? ["deeplink_url", "deeplinkUrl", "deep_link", "deepLink", "app_url", "appUrl", "launch_url", "launchUrl", "universal_link", "universalLink", "url", "href"]
+            : ["verify_url", "verifyUrl", "deeplink_callback", "deeplinkCallback", "url", "href"]
+        for key in keys {
+            if let match = firstStringValue(named: key, in: launch) {
+                return match
+            }
+        }
+        return nil
     }
 
     private func firstStringValue(named key: String, in value: JSONValue) -> String? {
@@ -1162,6 +2681,11 @@ struct VerificationView: View {
         }
         return nil
     }
+}
+
+private struct VerificationMobileAppDownload {
+    let appName: String
+    let iosURL: URL?
 }
 
 struct CommunityModerationView: View {
@@ -1217,7 +2741,7 @@ struct CommunityModerationView: View {
                                 .font(PirateTokens.Typography.bodyStrong)
                                 .foregroundStyle(colors.textPrimary)
                             Spacer()
-                            Image(systemName: "chevron.right").foregroundStyle(colors.textSecondary)
+                            PirateSystemIconView(systemName: "chevron.right").foregroundStyle(colors.textSecondary)
                         }
                     }
                 }

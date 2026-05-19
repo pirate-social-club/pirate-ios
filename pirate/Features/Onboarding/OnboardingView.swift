@@ -8,7 +8,7 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(spacing: 24) {
-            Image(systemName: "flag.checkered")
+            PirateSystemIconView(systemName: "flag.checkered", size: 48)
                 .font(.system(size: 48))
                 .foregroundStyle(colors.accentBrand)
 

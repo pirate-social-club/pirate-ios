@@ -14,46 +14,48 @@ struct SignInDrawer: View {
     @State private var didCompleteSessionExchange = false
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    header
-
-                    if case .loading = authService.authState {
-                        ProgressView()
-                            .tint(colors.accentBrand)
-                            .scaleEffect(1.2)
-                    } else if isExchangingSession {
-                        ProgressView()
-                            .tint(colors.accentBrand)
-                            .scaleEffect(1.2)
-                    } else if case let .error(message) = authService.authState {
-                        errorBanner(message)
-                    }
-
-                    authButtons
-
-                    emailForm
-                }
-                .padding(.horizontal, PirateTokens.pageGutter)
-                .padding(.vertical, 24)
-            }
-            .background(colors.bgPage)
-            .navigationTitle("Sign In")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") {
+        ScrollView {
+            VStack(spacing: 24) {
+                HStack {
+                    Spacer()
+                    Button {
                         isPresented = false
+                        dismiss()
+                    } label: {
+                        PirateIconView(icon: .x, size: 18, color: colors.textSecondary)
+                            .frame(width: 36, height: 36)
+                            .background(colors.bgElevated, in: Circle())
+                            .overlay(Circle().stroke(colors.borderSoft, lineWidth: 1))
                     }
-                    .foregroundStyle(colors.textSecondary)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close")
                 }
+
+                header
+
+                if case .loading = authService.authState {
+                    ProgressView()
+                        .tint(colors.accentBrand)
+                        .scaleEffect(1.2)
+                } else if isExchangingSession {
+                    ProgressView()
+                        .tint(colors.accentBrand)
+                        .scaleEffect(1.2)
+                } else if case let .error(message) = authService.authState {
+                    errorBanner(message)
+                }
+
+                authButtons
+
+                emailForm
             }
+            .padding(.horizontal, PirateTokens.pageGutter)
+            .padding(.vertical, 16)
         }
+        .background(colors.bgPage)
         #if os(iOS)
         .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
         #endif
         .task {
             authService.initialize()
@@ -116,32 +118,37 @@ struct SignInDrawer: View {
             Button {
                 Task { await authService.loginWithGoogle() }
             } label: {
-                authButtonLabel(icon: "globe", text: "Google", isPrimary: true)
+                authButtonLabel(provider: .google, text: "Continue with Google")
             }
 
             Button {
                 Task { await authService.loginWithTwitter() }
             } label: {
-                authButtonLabel(icon: "xmark", text: "X", isPrimary: false)
+                authButtonLabel(provider: .twitter, text: "Continue with Twitter")
             }
         }
     }
 
-    private func authButtonLabel(icon: String, text: String, isPrimary: Bool) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 16))
+    private func authButtonLabel(provider: SignInProviderIcon, text: String) -> some View {
+        HStack(spacing: 10) {
+            provider.icon
             Text(text)
                 .font(PirateTokens.Typography.bodyStrong)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .foregroundStyle(isPrimary ? colors.textOnAccent : colors.textPrimary)
-        .background(isPrimary ? colors.accentBrand : colors.bgElevated, in: RoundedRectangle(cornerRadius: PirateTokens.radii.full))
+        .foregroundStyle(colors.textPrimary)
+        .background(colors.bgElevated, in: RoundedRectangle(cornerRadius: PirateTokens.radii.full))
         .overlay(
             RoundedRectangle(cornerRadius: PirateTokens.radii.full)
-                .stroke(isPrimary ? Color.clear : colors.borderDefault, lineWidth: isPrimary ? 0 : 1)
+                .stroke(colors.borderDefault, lineWidth: 1)
         )
+    }
+
+    private var isEmailValid: Bool {
+        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pattern = #"^[^@\s]+@[^@\s]+\.[^@\s]+$"#
+        return trimmed.range(of: pattern, options: .regularExpression) != nil
     }
 
     private var emailForm: some View {
@@ -158,12 +165,7 @@ struct SignInDrawer: View {
                 Button {
                     Task { await authService.loginWithEmailCode(emailCode, email: email) }
                 } label: {
-                    Text("Verify and Sign In")
-                        .font(PirateTokens.Typography.bodyStrong)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .foregroundStyle(colors.textOnAccent)
-                        .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: PirateTokens.radii.full))
+                    emailActionLabel("Verify and Sign In", enabled: emailCode.count >= 6)
                 }
                 .disabled(emailCode.count < 6)
             } else {
@@ -182,23 +184,105 @@ struct SignInDrawer: View {
                 Button {
                     Task {
                         do {
-                            try await authService.sendEmailCode(email)
+                            try await authService.sendEmailCode(email.trimmingCharacters(in: .whitespacesAndNewlines))
                             showEmailCode = true
                         } catch {
                             authService.authState = .error(error.localizedDescription)
                         }
                     }
                 } label: {
-                    Text("Send Code")
-                        .font(PirateTokens.Typography.bodyStrong)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .foregroundStyle(colors.textOnAccent)
-                        .background(colors.accentBrand, in: RoundedRectangle(cornerRadius: PirateTokens.radii.full))
+                    emailActionLabel("Send Code", enabled: isEmailValid)
                 }
-                .disabled(email.isEmpty || !email.contains("@"))
+                .disabled(!isEmailValid)
             }
         }
         .padding(.top, 8)
+    }
+
+    private func emailActionLabel(_ title: String, enabled: Bool) -> some View {
+        Text(title)
+            .font(PirateTokens.Typography.bodyStrong)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .foregroundStyle(enabled ? colors.textOnAccent : colors.textDisabled)
+            .background(enabled ? colors.accentBrand : colors.bgElevated, in: RoundedRectangle(cornerRadius: PirateTokens.radii.full))
+            .overlay(
+                RoundedRectangle(cornerRadius: PirateTokens.radii.full)
+                    .stroke(enabled ? colors.accentBrand : colors.borderSoft, lineWidth: 1)
+            )
+    }
+}
+
+private enum SignInProviderIcon {
+    case google
+    case twitter
+
+    @ViewBuilder
+    var icon: some View {
+        switch self {
+        case .google:
+            PhosphorGoogleLogo()
+                .stroke(Color(red: 0xEA / 255.0, green: 0x43 / 255.0, blue: 0x35 / 255.0), style: StrokeStyle(lineWidth: 2.8, lineCap: .round, lineJoin: .round))
+                .frame(width: 26, height: 26)
+        case .twitter:
+            PhosphorTwitterLogo()
+                .fill(Color(red: 0x1D / 255.0, green: 0x9B / 255.0, blue: 0xF0 / 255.0))
+                .frame(width: 26, height: 26)
+        }
+    }
+}
+
+private struct PhosphorGoogleLogo: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let scaleX = rect.width / 24
+        let scaleY = rect.height / 24
+
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x * scaleX, y: rect.minY + y * scaleY)
+        }
+
+        path.move(to: point(21, 11.2))
+        path.addLine(to: point(12.3, 11.2))
+        path.move(to: point(20.5, 14.4))
+        path.addCurve(to: point(12, 21), control1: point(19.4, 18.4), control2: point(16, 21))
+        path.addCurve(to: point(3, 12), control1: point(7, 21), control2: point(3, 17))
+        path.addCurve(to: point(12, 3), control1: point(3, 7), control2: point(7, 3))
+        path.addCurve(to: point(18.4, 5.6), control1: point(14.5, 3), control2: point(16.8, 4))
+        return path
+    }
+}
+
+private struct PhosphorTwitterLogo: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let scaleX = rect.width / 24
+        let scaleY = rect.height / 24
+
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x * scaleX, y: rect.minY + y * scaleY)
+        }
+
+        path.move(to: point(22, 5.9))
+        path.addCurve(to: point(19.4, 6.6), control1: point(21.2, 6.3), control2: point(20.3, 6.5))
+        path.addCurve(to: point(21.2, 4.3), control1: point(20.4, 6), control2: point(20.9, 5.2))
+        path.addCurve(to: point(18.5, 5.3), control1: point(20.3, 4.8), control2: point(19.4, 5.1))
+        path.addCurve(to: point(15.3, 4), control1: point(17.7, 4.5), control2: point(16.6, 4))
+        path.addCurve(to: point(11.2, 8.1), control1: point(13, 4), control2: point(11.2, 5.8))
+        path.addLine(to: point(11.2, 9))
+        path.addCurve(to: point(4.2, 5.4), control1: point(7.9, 8.8), control2: point(5, 7.3))
+        path.addCurve(to: point(3.7, 7.5), control1: point(3.8, 6.1), control2: point(3.7, 6.8))
+        path.addCurve(to: point(5.5, 10.9), control1: point(3.7, 8.9), control2: point(4.4, 10.1))
+        path.addCurve(to: point(3.7, 10.4), control1: point(4.9, 10.9), control2: point(4.3, 10.7))
+        path.addCurve(to: point(7, 14.4), control1: point(4.2, 12.3), control2: point(5.4, 13.7))
+        path.addCurve(to: point(5.1, 14.5), control1: point(6.4, 14.6), control2: point(5.7, 14.6))
+        path.addCurve(to: point(9, 17.4), control1: point(5.9, 16.1), control2: point(7.3, 17.1))
+        path.addCurve(to: point(3, 19.1), control1: point(7.3, 18.7), control2: point(5.2, 19.4))
+        path.addCurve(to: point(12.9, 22), control1: point(5.1, 20.4), control2: point(7.7, 21.1))
+        path.addCurve(to: point(20.8, 9.4), control1: point(18.8, 22), control2: point(20.8, 16.8))
+        path.addLine(to: point(20.8, 8.8))
+        path.addCurve(to: point(22, 5.9), control1: point(21.6, 8.2), control2: point(21.9, 7))
+        path.closeSubpath()
+        return path
     }
 }

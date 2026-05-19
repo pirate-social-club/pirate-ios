@@ -6,6 +6,7 @@ struct ChatPlaceholderView: View {
     @Environment(\.pirateRadii) private var radii
 
     var sessionManager: SessionManager
+    var initialTarget: String? = nil
     @State private var chatService = XmtpChatService.shared
     @State private var mode: ChatMode = .conversations
     @State private var newDmTarget = ""
@@ -14,6 +15,12 @@ struct ChatPlaceholderView: View {
     @State private var draftMessage = ""
     @State private var actionInFlight = false
     @State private var errorMessage: String?
+    @State private var didOpenInitialTarget = false
+
+    init(sessionManager: SessionManager, initialTarget: String? = nil) {
+        self.sessionManager = sessionManager
+        self.initialTarget = initialTarget
+    }
 
     var body: some View {
         AuthGate(isAuthenticated: sessionManager.isAuthenticated, sessionManager: sessionManager) {
@@ -31,8 +38,9 @@ struct ChatPlaceholderView: View {
             }
             .background(colors.bgPage)
             .hiddenRootNavigationBar()
-            .task(id: sessionManager.primaryWalletAddress) {
+            .task(id: "\(sessionManager.primaryWalletAddress ?? ""):\(initialTarget ?? "")") {
                 await bootstrap()
+                await openInitialTargetIfNeeded()
             }
             .onAppear {
                 chatService.setChatVisible(true)
@@ -192,7 +200,7 @@ struct ChatPlaceholderView: View {
                 chatService.closeConversation()
                 mode = .conversations
             } label: {
-                Image(systemName: "chevron.left")
+                PirateSystemIconView(systemName: "chevron.left", size: 18)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(colors.textPrimary)
             }
@@ -219,7 +227,7 @@ struct ChatPlaceholderView: View {
 
             if let address = active?.peerAddress, XmtpAddressing.looksLikeEthereumAddress(address) {
                 NavigationLink(value: PirateRoute.publicProfileByWallet(address)) {
-                    Image(systemName: "person.crop.circle")
+                    PirateSystemIconView(systemName: "person.crop.circle", size: 20)
                         .font(.system(size: 20))
                         .foregroundStyle(colors.textSecondary)
                 }
@@ -246,7 +254,7 @@ struct ChatPlaceholderView: View {
             Button {
                 Task { await sendMessage() }
             } label: {
-                Image(systemName: "paperplane.fill")
+                PirateSystemIconView(systemName: "paperplane.fill", size: 17)
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(colors.textOnAccent)
                     .frame(width: 42, height: 42)
@@ -300,7 +308,7 @@ struct ChatPlaceholderView: View {
                 .fill(colors.surfaceSubtle)
                 .frame(width: 42, height: 42)
                 .overlay(
-                    Image(systemName: "person.2.fill")
+                    PirateSystemIconView(systemName: "person.2.fill", size: 18)
                         .font(.system(size: 18))
                         .foregroundStyle(colors.accentBrand)
                 )
@@ -346,7 +354,7 @@ struct ChatPlaceholderView: View {
             Button {
                 mode = .conversations
             } label: {
-                Image(systemName: "chevron.left")
+                PirateSystemIconView(systemName: "chevron.left", size: 18)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(colors.textPrimary)
             }
@@ -374,7 +382,7 @@ struct ChatPlaceholderView: View {
                     ProgressView()
                         .tint(colors.textOnAccent)
                 } else {
-                    Image(systemName: systemImage)
+                    PirateSystemIconView(systemName: systemImage)
                 }
                 Text(title)
                     .font(PirateTokens.Typography.bodyStrong)
@@ -390,7 +398,7 @@ struct ChatPlaceholderView: View {
 
     private func errorBanner(_ message: String) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle")
+            PirateSystemIconView(systemName: "exclamationmark.triangle")
                 .foregroundStyle(colors.accentWarning)
             Text(message)
                 .font(PirateTokens.Typography.small)
@@ -400,7 +408,7 @@ struct ChatPlaceholderView: View {
             Button {
                 errorMessage = nil
             } label: {
-                Image(systemName: "xmark")
+                PirateSystemIconView(systemName: "xmark")
                     .foregroundStyle(colors.textSecondary)
             }
             .buttonStyle(.plain)
@@ -456,6 +464,18 @@ struct ChatPlaceholderView: View {
             mode = .thread
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func openInitialTargetIfNeeded() async {
+        guard !didOpenInitialTarget else { return }
+        guard let target = initialTarget?.trimmedForChat, !target.isEmpty else { return }
+        guard chatService.isConnected else { return }
+        didOpenInitialTarget = true
+        await runAction {
+            let id = try await chatService.newDm(target)
+            try await chatService.openConversation(id)
+            mode = .thread
         }
     }
 
