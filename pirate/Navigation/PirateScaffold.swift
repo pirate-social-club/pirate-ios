@@ -128,6 +128,19 @@ struct PirateScaffold: View {
         guard !didApplyDebugLaunchRoute else { return }
         didApplyDebugLaunchRoute = true
 
+        if let route = ProcessInfo.processInfo.environment["PIRATE_DEBUG_ROUTE"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !route.isEmpty {
+            switch route {
+            case "createCommunity", "communities/new":
+                selectedTab = .home
+                homePath = [.createCommunity]
+                return
+            default:
+                break
+            }
+        }
+
         guard let postId = ProcessInfo.processInfo.environment["PIRATE_DEBUG_POST_ID"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
               !postId.isEmpty

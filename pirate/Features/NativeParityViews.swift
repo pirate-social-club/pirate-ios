@@ -1890,7 +1890,6 @@ struct CreateCommunityView: View {
                     if let created {
                         createdContent(created)
                     } else {
-                        stepHeader
                         stepContent
 
                         if let errorMessage {
@@ -2006,27 +2005,6 @@ struct CreateCommunityView: View {
             return gateDraftsValid
         case .review:
             return canCreateCommunity
-        }
-    }
-
-    private var stepHeader: some View {
-        PirateCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    ForEach(CreateCommunityStep.allCases, id: \.rawValue) { item in
-                        Circle()
-                            .fill(item.rawValue <= step.rawValue ? colors.accentBrand : colors.borderDefault)
-                            .frame(width: 8, height: 8)
-                    }
-                    Spacer()
-                    Text("Step \(step.rawValue) of \(CreateCommunityStep.allCases.count)")
-                        .font(PirateTokens.Typography.smallStrong)
-                        .foregroundStyle(colors.textSecondary)
-                }
-                Text(step.title)
-                    .font(PirateTokens.Typography.h2)
-                    .foregroundStyle(colors.textPrimary)
-            }
         }
     }
 
@@ -2799,80 +2777,109 @@ struct CreateCommunityView: View {
 
 struct YourCommunitiesView: View {
     @Environment(\.pirateColors) private var colors
+    @Environment(\.pirateRadii) private var radii
+    @Environment(\.dismiss) private var dismiss
     var sessionManager: SessionManager
 
-    @State private var handle: String?
-    @State private var communities: [PublicProfileCommunitySummary] = []
+    @State private var communities: [SubmitCommunityOption] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
 
     var body: some View {
         AuthGate(isAuthenticated: sessionManager.isAuthenticated, sessionManager: sessionManager) {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if let handle {
-                        Text("@\(handle)")
-                            .font(PirateTokens.Typography.caption)
-                            .foregroundStyle(colors.textSecondary)
-                            .padding(.horizontal, PirateTokens.pageGutter)
-                            .padding(.top, 12)
-                    }
-
+                LazyVStack(alignment: .leading, spacing: 10) {
                     if isLoading {
                         LoadingView().frame(height: 200)
                     } else if let errorMessage {
                         ErrorView(message: errorMessage, retry: load)
                     } else if communities.isEmpty {
-                        EmptyStateView(icon: "person.3", title: "No communities yet", subtitle: "Communities you create will appear here.")
+                        EmptyStateView(
+                            icon: "person.3",
+                            title: "No joined communities",
+                            subtitle: "Communities you join will appear here."
+                        )
                     } else {
                         ForEach(communities) { community in
                             NavigationLink(value: PirateRoute.community(community.id)) {
-                                PirateCard {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(community.displayName)
-                                                .font(PirateTokens.Typography.bodyStrong)
-                                                .foregroundStyle(colors.textPrimary)
-                                            Text(community.routeSlug.map { "c/\($0)" } ?? community.id)
-                                                .font(PirateTokens.Typography.small)
-                                                .foregroundStyle(colors.textSecondary)
-                                        }
-                                        Spacer()
-                                        PirateSystemIconView(systemName: "chevron.right").foregroundStyle(colors.textSecondary)
+                                HStack(spacing: 12) {
+                                    CommunityAvatarView(
+                                        avatarRef: community.avatarRef,
+                                        communityId: community.id,
+                                        displayName: community.displayName,
+                                        size: 36
+                                    )
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        CommunityNameLabel(
+                                            text: community.routeLabel,
+                                            isUnverified: community.routeIsUnverified,
+                                            font: PirateTokens.Typography.bodyStrong,
+                                            color: colors.textPrimary,
+                                            iconSize: 14
+                                        )
+                                        Text("Joined")
+                                            .font(PirateTokens.Typography.small)
+                                            .foregroundStyle(colors.textSecondary)
                                     }
+                                    Spacer()
+                                    PirateSystemIconView(systemName: "chevron.right", size: 13)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(colors.textSecondary)
                                 }
+                                .padding(12)
+                                .background(colors.surfaceSubtle, in: RoundedRectangle(cornerRadius: radii.x2l))
                             }
                             .buttonStyle(.plain)
                             .padding(.horizontal, PirateTokens.pageGutter)
                         }
                     }
                 }
+                .padding(.top, 12)
             }
             .background(colors.bgPage)
             .navigationTitle("Your communities")
+            .inlineNavigationBarTitle()
+            .navigationBarBackButtonHidden(true)
+            .tint(colors.textPrimary)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        PirateIconView(icon: .caretLeft, size: 22, color: colors.textPrimary)
+                            .frame(width: 34, height: 34)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Back")
+                }
+            }
             .task { await load() }
             .refreshable { await load() }
         }
     }
 
     private func load() async {
-        guard let handleLabel = sessionManager.profile?.globalHandle?.label else {
-            errorMessage = "Public handle unavailable."
-            isLoading = false
-            return
-        }
         isLoading = true
         errorMessage = nil
+        defer { isLoading = false }
+
         do {
-            let resolution = try await ApiClient.shared.publicProfile(handle: handleLabel)
-            handle = resolution.resolvedHandleLabels?.first ?? handleLabel
-            communities = resolution.createdCommunities ?? []
+            communities = try await ApiClient.shared.postableCommunities()
+                .communities
+                .filter { $0.action == "compose" }
+                .map {
+                    SubmitCommunityOption(
+                        id: $0.communityId,
+                        displayName: $0.displayName,
+                        routeSlug: $0.routeSlug,
+                        avatarRef: $0.avatarRef
+                    )
+                }
         } catch let error as ApiError {
             errorMessage = error.displayMessage
         } catch {
             errorMessage = error.localizedDescription
         }
-        isLoading = false
     }
 }
 

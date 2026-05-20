@@ -761,6 +761,7 @@ private struct HomeFeedPullRefreshOffsetKey: PreferenceKey {
 private struct HomeSidebarSheet: View {
     @Environment(\.pirateColors) private var colors
     @Environment(\.pirateRadii) private var radii
+    @Environment(\.navigatePirateRoute) private var navigatePirateRoute
     @Binding var isPresented: Bool
     let sortMode: String
     let onSelectSort: (String) -> Void
@@ -833,10 +834,12 @@ private struct HomeSidebarSheet: View {
     }
 
     private func navigationRow(label: String, icon: PirateIcon, route: PirateRoute) -> some View {
-        NavigationLink(value: route) {
+        Button {
+            navigatePirateRoute(route)
+            isPresented = false
+        } label: {
             rowContent(label: label, icon: icon, trailingIcon: .caretRight)
         }
-        .simultaneousGesture(TapGesture().onEnded { isPresented = false })
         .buttonStyle(.plain)
     }
 
