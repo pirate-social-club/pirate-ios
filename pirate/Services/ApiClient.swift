@@ -379,6 +379,10 @@ extension ApiClient {
         return try await request(path: "/auth/session/exchange", method: .POST, body: encode(body), requireAuth: false)
     }
 
+    func currentUser() async throws -> User {
+        return try await request(path: "/users/me")
+    }
+
 }
 
 // MARK: - Feed
@@ -588,8 +592,13 @@ extension ApiClient {
         return try await request(path: "/public-comments/posts/\(pathSegment(postId))/comments", queryItems: items.isEmpty ? nil : items, requireAuth: false)
     }
 
-    func createComment(communityId: String, postId: String, body: CreateCommentRequest) async throws {
-        try await requestVoid(path: "/communities/\(pathSegment(communityId))/posts/\(pathSegment(postId))/comments", method: .POST, body: encode(body))
+    func createComment(communityId: String, postId: String, body: CreateCommentRequest, altchaPayload: String? = nil) async throws {
+        try await requestVoid(
+            path: "/communities/\(pathSegment(communityId))/posts/\(pathSegment(postId))/comments",
+            method: .POST,
+            body: encode(body),
+            headers: altchaHeaders(altchaPayload)
+        )
     }
 
     func voteComment(id: String, value: Int, altchaPayload: String? = nil) async throws -> CommentVoteResponse {
@@ -618,8 +627,13 @@ extension ApiClient {
         return try await request(path: "/public-comments/\(pathSegment(commentId))/replies", queryItems: items.isEmpty ? nil : items, requireAuth: false)
     }
 
-    func createReply(commentId: String, body: CreateCommentRequest) async throws {
-        try await requestVoid(path: "/comments/\(pathSegment(commentId))/replies", method: .POST, body: encode(body))
+    func createReply(commentId: String, body: CreateCommentRequest, altchaPayload: String? = nil) async throws {
+        try await requestVoid(
+            path: "/comments/\(pathSegment(commentId))/replies",
+            method: .POST,
+            body: encode(body),
+            headers: altchaHeaders(altchaPayload)
+        )
     }
 }
 
@@ -627,6 +641,10 @@ extension ApiClient {
 extension ApiClient {
     func myProfile() async throws -> Profile {
         return try await request(path: "/profiles/me")
+    }
+
+    func postableCommunities() async throws -> PostableCommunitiesResponse {
+        return try await request(path: "/profiles/me/postable-communities")
     }
 
     func profile(userId: String) async throws -> Profile {

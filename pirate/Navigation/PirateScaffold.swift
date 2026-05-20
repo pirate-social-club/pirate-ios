@@ -44,12 +44,18 @@ struct PirateScaffold: View {
                         routeDestination(for: route)
                     }
             }
+            .environment(\.navigatePirateRoute) { route in
+                homePath.append(route)
+            }
         case .wallet:
             NavigationStack(path: $walletPath) {
                 WalletView(sessionManager: sessionManager)
                     .navigationDestination(for: PirateRoute.self) { route in
                         routeDestination(for: route)
                     }
+            }
+            .environment(\.navigatePirateRoute) { route in
+                walletPath.append(route)
             }
         case .chat:
             NavigationStack(path: $chatPath) {
@@ -58,6 +64,9 @@ struct PirateScaffold: View {
                         routeDestination(for: route)
                     }
             }
+            .environment(\.navigatePirateRoute) { route in
+                chatPath.append(route)
+            }
         case .notifications:
             NavigationStack(path: $notificationsPath) {
                 NotificationsView(sessionManager: sessionManager)
@@ -65,12 +74,18 @@ struct PirateScaffold: View {
                         routeDestination(for: route)
                     }
             }
+            .environment(\.navigatePirateRoute) { route in
+                notificationsPath.append(route)
+            }
         case .me:
             NavigationStack(path: $mePath) {
                 MeView(sessionManager: sessionManager)
                     .navigationDestination(for: PirateRoute.self) { route in
                         routeDestination(for: route)
                     }
+            }
+            .environment(\.navigatePirateRoute) { route in
+                mePath.append(route)
             }
         }
     }

@@ -10,6 +10,7 @@ struct NotificationsView: View {
     @State private var nextCursor: String?
     @State private var isLoading = true
     @State private var isLoadingMore = false
+    @State private var verifyingHumanTaskId: String?
     @State private var errorMessage: String?
 
     var body: some View {
@@ -90,7 +91,19 @@ struct NotificationsView: View {
 
     @ViewBuilder
     private func taskRow(_ task: UserTask) -> some View {
-        if let route = taskRoute(for: task) {
+        if task.type == "unique_human_verification_required" {
+            Button {
+                Task { await startVeryHumanVerification(task) }
+            } label: {
+                taskRowContent(
+                    task,
+                    interactive: verifyingHumanTaskId == nil,
+                    loading: verifyingHumanTaskId == task.id
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(verifyingHumanTaskId != nil)
+        } else if let route = taskRoute(for: task) {
             NavigationLink(value: route) {
                 taskRowContent(task, interactive: true)
             }
@@ -105,36 +118,48 @@ struct NotificationsView: View {
         }
     }
 
-    private func taskRowContent(_ task: UserTask, interactive: Bool) -> some View {
+    private func taskRowContent(_ task: UserTask, interactive: Bool, loading: Bool = false) -> some View {
         notificationRow(
             icon: taskIcon(for: task),
             title: taskTitle(for: task),
             subtitle: taskMeta(for: task),
             unread: true,
-            interactive: interactive
+            interactive: interactive,
+            loading: loading
         )
     }
 
     @ViewBuilder
     private func activityRow(_ item: NotificationFeedItem) -> some View {
         if let route = activityRoute(for: item) {
-            NavigationLink(value: route) {
-                activityRowContent(item, interactive: true)
+            if case .verificationVery(let intent) = route {
+                Button {
+                    Task { await startVeryHumanVerification(task: nil, intent: intent, sourceId: item.id) }
+                } label: {
+                    activityRowContent(item, interactive: verifyingHumanTaskId == nil, loading: verifyingHumanTaskId == item.id)
+                }
+                .buttonStyle(.plain)
+                .disabled(verifyingHumanTaskId != nil)
+            } else {
+                NavigationLink(value: route) {
+                    activityRowContent(item, interactive: true)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         } else {
             activityRowContent(item, interactive: false)
         }
     }
 
-    private func activityRowContent(_ item: NotificationFeedItem, interactive: Bool) -> some View {
+    private func activityRowContent(_ item: NotificationFeedItem, interactive: Bool, loading: Bool = false) -> some View {
         notificationRow(
             icon: activityIcon(for: item),
             title: activityTitle(for: item),
             subtitle: activityContext(for: item),
             meta: formatRelativeTimestamp(item.event?.created),
             unread: item.receipt?.readAt == nil,
-            interactive: interactive
+            interactive: interactive,
+            loading: loading
         )
     }
 
@@ -144,7 +169,8 @@ struct NotificationsView: View {
         subtitle: String?,
         meta: String? = nil,
         unread: Bool,
-        interactive: Bool
+        interactive: Bool,
+        loading: Bool = false
     ) -> some View {
         HStack(spacing: 12) {
             Circle()
@@ -152,12 +178,20 @@ struct NotificationsView: View {
                 .frame(width: 40, height: 40)
                 .overlay(Circle().stroke(colors.borderSoft, lineWidth: 1))
                 .overlay(
-                    PirateIconView(
-                        icon: icon,
-                        filled: unread,
-                        size: 22,
-                        color: unread ? colors.textPrimary : colors.textSecondary
-                    )
+                    Group {
+                        if loading {
+                            ProgressView()
+                                .tint(colors.accentBrand)
+                                .scaleEffect(0.8)
+                        } else {
+                            PirateIconView(
+                                icon: icon,
+                                filled: unread,
+                                size: 22,
+                                color: unread ? colors.textPrimary : colors.textSecondary
+                            )
+                        }
+                    }
                 )
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -172,7 +206,7 @@ struct NotificationsView: View {
                 }
             }
             Spacer()
-            if interactive {
+            if interactive && !loading {
                 PirateIconView(icon: .caretRight, size: 18, color: colors.textSecondary)
             }
         }
@@ -247,6 +281,31 @@ struct NotificationsView: View {
         }
         guard !unreadEventIds.isEmpty else { return }
         try? await ApiClient.shared.markNotificationsRead(eventIds: unreadEventIds)
+    }
+
+    private func startVeryHumanVerification(_ task: UserTask) async {
+        await startVeryHumanVerification(task: task, intent: "profile_verification", sourceId: task.id)
+    }
+
+    private func startVeryHumanVerification(task: UserTask?, intent: String, sourceId: String) async {
+        guard verifyingHumanTaskId == nil else { return }
+        verifyingHumanTaskId = sourceId
+        errorMessage = nil
+        defer { verifyingHumanTaskId = nil }
+
+        let result = await VeryVerificationLauncher.launch(verificationIntent: intent)
+        guard result.verified else {
+            errorMessage = result.failureReason ?? "Very verification was not completed."
+            return
+        }
+
+        if let task {
+            try? await ApiClient.shared.dismissTask(taskId: task.id)
+            tasks.removeAll { $0.id == task.id }
+        }
+        await sessionManager.refreshUser()
+        await sessionManager.refreshProfile()
+        await loadNotifications()
     }
 
     private func dismissTask(_ task: UserTask) async {

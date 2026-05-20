@@ -813,7 +813,12 @@ private struct ProfileActivityMetaLine: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            AvatarView(avatarRef: community.avatarRef, size: 28, fallbackLabel: community.displayName)
+            CommunityAvatarView(
+                avatarRef: community.avatarRef,
+                communityId: community.id,
+                displayName: community.displayName,
+                size: 28
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(community.displayName)

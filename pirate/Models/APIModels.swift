@@ -171,22 +171,116 @@ struct SessionExchangeResponse: Codable {
     }
 }
 
+struct UserVerificationCapability: Codable, Equatable {
+    let state: String?
+    let provider: String?
+    let proofType: String?
+    let mechanism: String?
+    let verifiedAt: String?
+    let value: JSONValue?
+
+    enum CodingKeys: String, CodingKey {
+        case state, provider, mechanism, value
+        case proofType = "proof_type"
+        case verifiedAt = "verified_at"
+    }
+
+    init(
+        state: String? = nil,
+        provider: String? = nil,
+        proofType: String? = nil,
+        mechanism: String? = nil,
+        verifiedAt: String? = nil,
+        value: JSONValue? = nil
+    ) {
+        self.state = state
+        self.provider = provider
+        self.proofType = proofType
+        self.mechanism = mechanism
+        self.verifiedAt = verifiedAt
+        self.value = value
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.state = container.decodeLossyStringIfPresent(forKey: .state)
+        self.provider = container.decodeLossyStringIfPresent(forKey: .provider)
+        self.proofType = container.decodeLossyStringIfPresent(forKey: .proofType)
+        self.mechanism = container.decodeLossyStringIfPresent(forKey: .mechanism)
+        self.verifiedAt = container.decodeLossyStringIfPresent(forKey: .verifiedAt)
+        self.value = try container.decodeIfPresent(JSONValue.self, forKey: .value)
+    }
+}
+
+struct UserVerificationCapabilities: Codable, Equatable {
+    let uniqueHuman: UserVerificationCapability?
+    let ageOver18: UserVerificationCapability?
+    let minimumAge: UserVerificationCapability?
+    let nationality: UserVerificationCapability?
+    let gender: UserVerificationCapability?
+    let walletScore: UserVerificationCapability?
+
+    enum CodingKeys: String, CodingKey {
+        case uniqueHuman = "unique_human"
+        case ageOver18 = "age_over_18"
+        case minimumAge = "minimum_age"
+        case nationality
+        case gender
+        case walletScore = "wallet_score"
+    }
+
+    init(
+        uniqueHuman: UserVerificationCapability? = nil,
+        ageOver18: UserVerificationCapability? = nil,
+        minimumAge: UserVerificationCapability? = nil,
+        nationality: UserVerificationCapability? = nil,
+        gender: UserVerificationCapability? = nil,
+        walletScore: UserVerificationCapability? = nil
+    ) {
+        self.uniqueHuman = uniqueHuman
+        self.ageOver18 = ageOver18
+        self.minimumAge = minimumAge
+        self.nationality = nationality
+        self.gender = gender
+        self.walletScore = walletScore
+    }
+}
+
 struct User: Codable, Identifiable {
     let userId: String
     let createdAt: String?
+    let verificationState: String?
+    let capabilityProvider: String?
+    let verificationCapabilities: UserVerificationCapabilities?
+    let verifiedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case userId = "user_id"
         case id
         case createdAt = "created_at"
         case created
+        case verificationState = "verification_state"
+        case capabilityProvider = "capability_provider"
+        case verificationCapabilities = "verification_capabilities"
+        case verifiedAt = "verified_at"
     }
 
     var id: String { userId }
 
-    init(userId: String, createdAt: String? = nil) {
+    init(
+        userId: String,
+        createdAt: String? = nil,
+        verificationState: String? = nil,
+        capabilityProvider: String? = nil,
+        verificationCapabilities: UserVerificationCapabilities? = nil,
+        verifiedAt: String? = nil
+    ) {
         self.userId = userId
         self.createdAt = createdAt
+        self.verificationState = verificationState
+        self.capabilityProvider = capabilityProvider
+        self.verificationCapabilities = verificationCapabilities
+        self.verifiedAt = verifiedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -196,12 +290,20 @@ struct User: Codable, Identifiable {
             ?? ""
         self.createdAt = container.decodeLossyStringIfPresent(forKey: .createdAt)
             ?? container.decodeLossyStringIfPresent(forKey: .created)
+        self.verificationState = container.decodeLossyStringIfPresent(forKey: .verificationState)
+        self.capabilityProvider = container.decodeLossyStringIfPresent(forKey: .capabilityProvider)
+        self.verificationCapabilities = try container.decodeIfPresent(UserVerificationCapabilities.self, forKey: .verificationCapabilities)
+        self.verifiedAt = container.decodeLossyStringIfPresent(forKey: .verifiedAt)
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(userId, forKey: .userId)
         try container.encodeIfPresent(createdAt, forKey: .createdAt)
+        try container.encodeIfPresent(verificationState, forKey: .verificationState)
+        try container.encodeIfPresent(capabilityProvider, forKey: .capabilityProvider)
+        try container.encodeIfPresent(verificationCapabilities, forKey: .verificationCapabilities)
+        try container.encodeIfPresent(verifiedAt, forKey: .verifiedAt)
     }
 }
 
@@ -2381,6 +2483,32 @@ struct PublicProfileCommunitySummary: Codable, Identifiable {
     }
 }
 
+struct PostableCommunitySummary: Codable, Identifiable {
+    let communityId: String
+    let displayName: String
+    let avatarRef: String?
+    let routeSlug: String?
+    let action: String
+
+    enum CodingKeys: String, CodingKey {
+        case communityId = "community_id"
+        case displayName = "display_name"
+        case avatarRef = "avatar_ref"
+        case routeSlug = "route_slug"
+        case action
+    }
+
+    var id: String { communityId }
+}
+
+struct PostableCommunitiesResponse: Codable {
+    let communities: [PostableCommunitySummary]
+
+    init(communities: [PostableCommunitySummary] = []) {
+        self.communities = communities
+    }
+}
+
 struct SessionExchangeProof: Codable {
     let type: String
     let privyAccessToken: String
@@ -2416,42 +2544,78 @@ struct HandlePolicyInput: Codable {
 struct CreateCommunityRequest: Codable {
     let displayName: String
     let description: String?
+    let avatarRef: String?
+    let bannerRef: String?
     let databaseRegion: String?
     let membershipMode: String?
     let governanceMode: String?
     let defaultAgeGatePolicy: String?
     let allowAnonymousIdentity: Bool?
+    let anonymousIdentityScope: String?
     let handlePolicy: HandlePolicyInput?
+    let gatePolicy: JSONValue?
+    let communityBootstrap: CreateCommunityBootstrapInput?
 
     init(
         displayName: String,
         description: String? = nil,
+        avatarRef: String? = nil,
+        bannerRef: String? = nil,
         databaseRegion: String? = "auto",
-        membershipMode: String? = "open",
+        membershipMode: String? = "gated",
         governanceMode: String? = "centralized",
         defaultAgeGatePolicy: String? = "none",
         allowAnonymousIdentity: Bool? = false,
-        handlePolicy: HandlePolicyInput? = HandlePolicyInput()
+        anonymousIdentityScope: String? = nil,
+        handlePolicy: HandlePolicyInput? = HandlePolicyInput(),
+        gatePolicy: JSONValue? = nil,
+        communityBootstrap: CreateCommunityBootstrapInput? = nil
     ) {
         self.displayName = displayName
         self.description = description
+        self.avatarRef = avatarRef
+        self.bannerRef = bannerRef
         self.databaseRegion = databaseRegion
         self.membershipMode = membershipMode
         self.governanceMode = governanceMode
         self.defaultAgeGatePolicy = defaultAgeGatePolicy
         self.allowAnonymousIdentity = allowAnonymousIdentity
+        self.anonymousIdentityScope = anonymousIdentityScope
         self.handlePolicy = handlePolicy
+        self.gatePolicy = gatePolicy
+        self.communityBootstrap = communityBootstrap
     }
 
     enum CodingKeys: String, CodingKey {
         case displayName = "display_name"
         case description
+        case avatarRef = "avatar_ref"
+        case bannerRef = "banner_ref"
         case databaseRegion = "database_region"
         case membershipMode = "membership_mode"
         case governanceMode = "governance_mode"
         case defaultAgeGatePolicy = "default_age_gate_policy"
         case allowAnonymousIdentity = "allow_anonymous_identity"
+        case anonymousIdentityScope = "anonymous_identity_scope"
         case handlePolicy = "handle_policy"
+        case gatePolicy = "gate_policy"
+        case communityBootstrap = "community_bootstrap"
+    }
+}
+
+struct CreateCommunityBootstrapInput: Codable {
+    let rules: [CreateCommunityRuleInput]
+}
+
+struct CreateCommunityRuleInput: Codable {
+    let title: String
+    let body: String
+    let reportReason: String
+    let position: Int
+
+    enum CodingKeys: String, CodingKey {
+        case title, body, position
+        case reportReason = "report_reason"
     }
 }
 
@@ -2660,6 +2824,18 @@ struct VerificationSession: Codable, Identifiable {
         case launch
         case createdAt = "created_at"
         case expiresAt = "expires_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = container.decodeLossyStringIfPresent(forKey: .id) ?? ""
+        self.status = container.decodeLossyStringIfPresent(forKey: .status)
+        self.provider = container.decodeLossyStringIfPresent(forKey: .provider)
+        self.providerMode = container.decodeLossyStringIfPresent(forKey: .providerMode)
+        self.verificationIntent = container.decodeLossyStringIfPresent(forKey: .verificationIntent)
+        self.launch = try container.decodeIfPresent(JSONValue.self, forKey: .launch)
+        self.createdAt = container.decodeLossyStringIfPresent(forKey: .createdAt)
+        self.expiresAt = container.decodeLossyStringIfPresent(forKey: .expiresAt)
     }
 }
 

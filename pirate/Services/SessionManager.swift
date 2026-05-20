@@ -72,6 +72,21 @@ final class SessionManager {
         } catch {}
     }
 
+    func refreshUser() async {
+        guard let currentSession else { return }
+        do {
+            let user = try await apiClient.currentUser()
+            let refreshed = SessionExchangeResponse(
+                accessToken: currentSession.accessToken,
+                user: user,
+                profile: currentSession.profile,
+                onboarding: currentSession.onboarding,
+                walletAttachments: currentSession.walletAttachments
+            )
+            setSession(refreshed)
+        } catch {}
+    }
+
     func logout() async {
         await authService.logout()
         self.currentSession = nil

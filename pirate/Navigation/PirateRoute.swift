@@ -1,5 +1,16 @@
 import SwiftUI
 
+private struct PirateNavigateRouteKey: EnvironmentKey {
+    static let defaultValue: (PirateRoute) -> Void = { _ in }
+}
+
+extension EnvironmentValues {
+    var navigatePirateRoute: (PirateRoute) -> Void {
+        get { self[PirateNavigateRouteKey.self] }
+        set { self[PirateNavigateRouteKey.self] = newValue }
+    }
+}
+
 enum PirateRoute: Hashable {
     case auth
     case onboarding

@@ -1,4 +1,4 @@
-import CryptoKit
+import CommonCrypto
 import Foundation
 
 enum AltchaSolverError: Error, LocalizedError {
@@ -26,7 +26,7 @@ struct AltchaSolvedPayload {
 enum AltchaSolver {
     static func solve(
         _ challenge: AltchaChallenge,
-        timeoutSeconds: TimeInterval = 8,
+        timeoutSeconds: TimeInterval = 60,
         checkCancellationEvery iterationsBetweenChecks: Int = 25
     ) async throws -> AltchaSolvedPayload {
         let solverTask = Task.detached(priority: .userInitiated) {
@@ -95,34 +95,25 @@ enum AltchaSolver {
         iterations: Int,
         keyLength: Int
     ) -> Data {
-        let hashLength = SHA256.byteCount
-        let blockCount = Int(ceil(Double(keyLength) / Double(hashLength)))
-        var output = Data()
-
-        for blockIndex in 1...blockCount {
-            var blockSalt = salt
-            blockSalt.append(UInt32(blockIndex).bigEndianData)
-
-            var u = hmacSHA256(key: password, message: blockSalt)
-            var t = u
-
-            if iterations > 1 {
-                for _ in 1..<iterations {
-                    u = hmacSHA256(key: password, message: u)
-                    t.xorInPlace(with: u)
+        var derived = Data(count: keyLength)
+        derived.withUnsafeMutableBytes { derivedOut in
+            password.withUnsafeBytes { passIn in
+                salt.withUnsafeBytes { saltIn in
+                    CCKeyDerivationPBKDF(
+                        CCPBKDFAlgorithm(kCCPBKDF2),
+                        passIn.baseAddress?.assumingMemoryBound(to: CChar.self),
+                        passIn.count,
+                        saltIn.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        saltIn.count,
+                        CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
+                        UInt32(iterations),
+                        derivedOut.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        keyLength
+                    )
                 }
             }
-
-            output.append(t)
         }
-
-        return output.prefixData(keyLength)
-    }
-
-    private static func hmacSHA256(key: Data, message: Data) -> Data {
-        let symmetricKey = SymmetricKey(data: key)
-        let code = HMAC<SHA256>.authenticationCode(for: message, using: symmetricKey)
-        return Data(code)
+        return derived
     }
 }
 
@@ -158,14 +149,4 @@ private extension Data {
         map { String(format: "%02x", $0) }.joined()
     }
 
-    mutating func xorInPlace(with other: Data) {
-        let count = Swift.min(self.count, other.count)
-        for index in 0..<count {
-            self[index] ^= other[index]
-        }
-    }
-
-    func prefixData(_ count: Int) -> Data {
-        Data(prefix(count))
-    }
 }

@@ -8,6 +8,7 @@ struct HomeView: View {
 
     @Environment(\.pirateColors) private var colors
     @Environment(\.pirateRadii) private var radii
+    @Environment(\.navigatePirateRoute) private var navigatePirateRoute
     var sessionManager: SessionManager
     var scrollToTopTrigger: Int = 0
 
@@ -327,7 +328,12 @@ struct HomeView: View {
         let isUnverified = !isCommunityRouteVerified(routeSlug: community.routeSlug, routeSlugImpliesVerified: true)
 
         return HStack(spacing: 8) {
-            AvatarView(avatarRef: community.avatarRef, size: 20, fallbackLabel: community.displayName)
+            CommunityAvatarView(
+                avatarRef: community.avatarRef,
+                communityId: community.id,
+                displayName: community.displayName,
+                size: 20
+            )
             NavigationLink(value: PirateRoute.community(community.id)) {
                 CommunityNameLabel(
                     text: label,
@@ -379,7 +385,12 @@ struct HomeView: View {
                 }
             )
 
-            CommentCountPill(count: post.commentCount ?? post.post.commentCount ?? 0)
+            CommentCountPill(
+                count: post.commentCount ?? post.post.commentCount ?? 0,
+                onComment: {
+                    openComments(for: item)
+                }
+            )
 
             Spacer()
         }
@@ -699,6 +710,25 @@ struct HomeView: View {
             actionError = inlineError
         }
         votingPostIds.remove(postId)
+    }
+
+    private func openComments(for item: HomeFeedItem) {
+        actionError = nil
+        Task {
+            await gateController.runPostReplyAccess(
+                isAuthenticated: sessionManager.isAuthenticated,
+                userId: sessionManager.user?.id,
+                communityId: item.community.id,
+                communityName: item.community.displayName,
+                showSignIn: { showSignIn = true },
+                continueAfterAccess: {
+                    navigatePirateRoute(.post(item.post.post.id))
+                }
+            )
+            if let inlineError = gateController.inlineError {
+                actionError = inlineError
+            }
+        }
     }
 
     private func prewarmGateEligibility() async {

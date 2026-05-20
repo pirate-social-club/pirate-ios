@@ -19,6 +19,14 @@ struct pirateApp: App {
                 .pirateTheme()
                 .environment(\.pirateMediaPlaybackCoordinator, mediaPlaybackCoordinator)
                 .onOpenURL { url in
+                    #if DEBUG
+                    if Self.isDebugVeryNativeURL(url) {
+                        Task { @MainActor in
+                            await Self.runDebugVeryNative(sessionManager: sessionManager)
+                        }
+                        return
+                    }
+                    #endif
                     VerificationCoordinator.shared.handleOpenURL(url)
                 }
         }
@@ -26,6 +34,30 @@ struct pirateApp: App {
 }
 
 private extension pirateApp {
+    #if DEBUG
+    static func isDebugVeryNativeURL(_ url: URL) -> Bool {
+        url.scheme == "pirate" && url.host == "debug" && url.path == "/very-native"
+    }
+
+    @MainActor
+    static func runDebugVeryNative(sessionManager: SessionManager) async {
+        for _ in 0..<20 where !sessionManager.isAuthenticated {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        let result = await VeryVerificationLauncher.launch(verificationIntent: "profile_verification")
+        NSLog(
+            "[VeryVerificationLauncher] debug deeplink result verified=%@ session=%@ failure=%@",
+            result.verified ? "true" : "false",
+            result.verificationSessionId ?? "nil",
+            result.failureReason ?? "nil"
+        )
+        if result.verified {
+            await sessionManager.refreshProfile()
+        }
+    }
+    #endif
+
     static func configureNavigationAppearance() {
         #if os(iOS)
         let colors = PirateUIKitColors.self

@@ -12,6 +12,9 @@ struct NavigationCoordinator: View {
                     routeDestination(for: route)
                 }
         }
+        .environment(\.navigatePirateRoute) { route in
+            navigationPath.append(route)
+        }
     }
 
     @ViewBuilder

@@ -44,6 +44,7 @@ struct CommunityView: View {
     @Environment(\.pirateColors) private var colors
     @Environment(\.pirateRadii) private var radii
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.navigatePirateRoute) private var navigatePirateRoute
     var sessionManager: SessionManager
 
     let communityId: String
@@ -54,8 +55,6 @@ struct CommunityView: View {
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var actionError: String?
-    @State private var isJoining = false
-    @State private var joinTask: Task<Void, Never>?
     @State private var showSignIn = false
     @State private var votingPostIds: Set<String> = []
     @State private var sortMode = "best"
@@ -63,10 +62,10 @@ struct CommunityView: View {
     @State private var isLoadingMore = false
     @State private var paginationError: String?
     @State private var joinEligibility: JoinEligibility?
-    @State private var eligibilityLoaded = false
     @State private var readMode: CommunityReadMode = .publicRead
     @State private var gateController = CommunityInteractionGateController()
     @State private var selfVerificationRequest: CommunitySelfVerificationRequest?
+    @State private var isCommunityDetailActive = true
 
     private var resolvedCommunityId: String {
         communityPreview?.community.id ?? communityId
@@ -128,9 +127,13 @@ struct CommunityView: View {
             }
 
             ToolbarItemGroup(placement: .topBarTrailing) {
-                NavigationLink(value: PirateRoute.composePost(resolvedCommunityId)) {
+                Button {
+                    beginComposePost()
+                } label: {
                     PirateIconView(icon: .plus, size: 21, color: colors.textPrimary)
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Create post")
                 if activeTab == "feed" {
                     sortMenu
                 }
@@ -143,7 +146,7 @@ struct CommunityView: View {
             SignInDrawer(sessionManager: sessionManager, isPresented: $showSignIn)
         }
         .sheet(isPresented: Binding(
-            get: { gateController.isSheetPresented },
+            get: { isCommunityDetailActive && gateController.isSheetPresented },
             set: { isPresented in
                 if !isPresented { gateController.closeSheet() }
             }
@@ -172,7 +175,72 @@ struct CommunityView: View {
             )
         }
         .onAppear {
+            isCommunityDetailActive = true
             Task { await gateController.resumeWithRetry() }
+        }
+        .onDisappear {
+            isCommunityDetailActive = false
+            gateController.closeSheet()
+        }
+    }
+
+    private func beginComposePost() {
+        gateController.closeSheet()
+        guard sessionManager.isAuthenticated else {
+            showSignIn = true
+            return
+        }
+        guard !canOpenComposerImmediately else {
+            openComposer()
+            return
+        }
+
+        Task {
+            await gateController.runPostCompose(
+                isAuthenticated: sessionManager.isAuthenticated,
+                userId: sessionManager.user?.id,
+                communityId: resolvedCommunityId,
+                communityName: communityPreview?.community.displayName ?? "this community",
+                showSignIn: { showSignIn = true },
+                continueAfterJoin: {
+                    openComposer()
+                }
+            )
+        }
+    }
+
+    private var canOpenComposerImmediately: Bool {
+        let status = joinEligibility?.status ?? communityPreview?.viewerMembershipStatus
+        return status == "already_joined"
+            || status == "member"
+            || status == "owner"
+            || status == "admin"
+            || status == "moderator"
+    }
+
+    private func openComposer() {
+        gateController.closeSheet()
+        navigatePirateRoute(.composePost(resolvedCommunityId))
+    }
+
+    private func beginCommunityJoin() {
+        gateController.closeSheet()
+        guard sessionManager.isAuthenticated else {
+            showSignIn = true
+            return
+        }
+
+        Task {
+            await gateController.runCommunityJoin(
+                isAuthenticated: sessionManager.isAuthenticated,
+                userId: sessionManager.user?.id,
+                communityId: resolvedCommunityId,
+                communityName: communityPreview?.community.displayName ?? "this community",
+                showSignIn: { showSignIn = true },
+                didJoin: {
+                    Task { await refreshCommunityHeader() }
+                }
+            )
         }
     }
 
@@ -203,7 +271,12 @@ struct CommunityView: View {
             .padding(.horizontal, PirateTokens.pageGutter)
 
             VStack(alignment: .leading, spacing: 12) {
-                AvatarView(avatarRef: preview.community.avatarRef, size: 72, fallbackLabel: preview.community.displayName)
+                CommunityAvatarView(
+                    avatarRef: preview.community.avatarRef,
+                    communityId: preview.community.id,
+                    displayName: preview.community.displayName,
+                    size: 72
+                )
                     .padding(.top, -36)
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -247,12 +320,6 @@ struct CommunityView: View {
                     if let followerCount = preview.community.followerCount {
                         communityMeta("\(followerCount) followers")
                     }
-                }
-
-                if let eligibilityText = eligibilityText {
-                    Text(eligibilityText)
-                        .font(PirateTokens.Typography.small)
-                        .foregroundStyle(colors.textSecondary)
                 }
 
                 communityHeaderActions(preview)
@@ -302,10 +369,15 @@ struct CommunityView: View {
         let status = joinEligibility?.status ?? preview.viewerMembershipStatus
         if status == "already_joined" || status == "member" {
             communityActionPill(title: "Joined", tone: .secondary)
-        } else if sessionManager.isAuthenticated && !eligibilityLoaded {
-            communityActionPill(title: "Checking...", tone: .secondary, loading: true)
         } else if status == "verification_required" || status == "gate_failed" {
-            if verificationProvider(for: joinEligibility) == "self" {
+            if requiresProofOfWork(joinEligibility) {
+                Button {
+                    beginCommunityJoin()
+                } label: {
+                    communityActionPill(title: joinButtonTitle(for: status), tone: .secondary)
+                }
+                .buttonStyle(.plain)
+            } else if verificationProvider(for: joinEligibility) == "self" {
                 Button {
                     if !sessionManager.isAuthenticated {
                         showSignIn = true
@@ -324,31 +396,13 @@ struct CommunityView: View {
             } else {
                 communityActionPill(title: joinButtonTitle(for: status), tone: .secondary)
             }
-        } else if isJoining {
-            Button {
-                joinTask?.cancel()
-                joinTask = nil
-                isJoining = false
-                actionError = nil
-            } label: {
-                communityActionPill(title: "Cancel", tone: .secondary, loading: true)
-            }
-            .buttonStyle(.plain)
         } else {
             Button {
-                if !sessionManager.isAuthenticated {
-                    showSignIn = true
-                    return
-                }
-                joinTask = Task {
-                    await joinCommunity()
-                    joinTask = nil
-                }
+                beginCommunityJoin()
             } label: {
-                communityActionPill(title: joinButtonTitle(for: status), tone: .secondary, loading: isJoining)
+                communityActionPill(title: joinButtonTitle(for: status), tone: .secondary)
             }
             .buttonStyle(.plain)
-            .disabled(isJoining)
         }
     }
 
@@ -475,7 +529,12 @@ struct CommunityView: View {
                     }
                 )
 
-                CommentCountPill(count: post.commentCount ?? post.post.commentCount ?? 0)
+                CommentCountPill(
+                    count: post.commentCount ?? post.post.commentCount ?? 0,
+                    onComment: {
+                        openComments(for: post)
+                    }
+                )
 
                 Spacer()
             }
@@ -501,6 +560,7 @@ struct CommunityView: View {
 
     private func postAuthorHeaderContent(_ localizedPost: LocalizedPostResponse) -> some View {
         let post = localizedPost.post
+        let metaLine = postMetaLine(for: post)
 
         return HStack(spacing: 10) {
             AvatarView(
@@ -510,21 +570,27 @@ struct CommunityView: View {
                 fallbackSeed: post.authorUserId ?? authorLabel(for: post)
             )
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
-                    Text(authorLabel(for: post))
-                        .font(PirateTokens.Typography.smallStrong)
-                        .foregroundStyle(colors.textPrimary)
-                        .lineLimit(1)
+            HStack(spacing: 5) {
+                Text(authorLabel(for: post))
+                    .font(PirateTokens.Typography.smallStrong)
+                    .foregroundStyle(colors.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
-                    CommunityRoleIconBadgeView(role: localizedPost.authorCommunityRole, size: 14)
-                }
+                CommunityRoleIconBadgeView(role: localizedPost.authorCommunityRole, size: 14)
+                    .fixedSize()
 
-                Text(postMetaLine(for: post))
+                Text("·")
+                    .font(PirateTokens.Typography.small)
+                    .foregroundStyle(colors.textSecondary)
+
+                Text(metaLine)
                     .font(PirateTokens.Typography.small)
                     .foregroundStyle(colors.textSecondary)
                     .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
 
             Spacer()
         }
@@ -1023,7 +1089,6 @@ struct CommunityView: View {
         errorMessage = nil
         actionError = nil
         paginationError = nil
-        eligibilityLoaded = !sessionManager.isAuthenticated
         joinEligibility = nil
         do {
             let loaded = try await loadCommunityPreview()
@@ -1036,7 +1101,6 @@ struct CommunityView: View {
             } else {
                 joinEligibility = nil
             }
-            eligibilityLoaded = true
 
             do {
                 let loadedPosts = try await loadCommunityPosts(
@@ -1062,6 +1126,25 @@ struct CommunityView: View {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    private func refreshCommunityHeader() async {
+        actionError = nil
+        do {
+            let loaded = try await loadCommunityPreview()
+            let preview = loaded.preview
+            readMode = loaded.readMode
+            communityPreview = preview
+            if sessionManager.isAuthenticated {
+                joinEligibility = try? await ApiClient.shared.joinEligibility(communityId: preview.community.id)
+            } else {
+                joinEligibility = nil
+            }
+        } catch let error as ApiError {
+            actionError = error.displayMessage
+        } catch {
+            actionError = error.localizedDescription
+        }
     }
 
     private func loadCommunityPreview() async throws -> (preview: CommunityPreview, readMode: CommunityReadMode) {
@@ -1142,43 +1225,6 @@ struct CommunityView: View {
         Task { await loadCommunity() }
     }
 
-    private func joinCommunity() async {
-        isJoining = true
-        actionError = nil
-        do {
-            let eligibility: JoinEligibility?
-            if let joinEligibility {
-                eligibility = joinEligibility
-            } else {
-                eligibility = try? await ApiClient.shared.joinEligibility(communityId: resolvedCommunityId)
-            }
-            let altchaPayload: String?
-            if eligibility?.missingCapabilities?.contains("altcha_pow") == true {
-                let communityRef = eligibility?.communityId.hasPrefix("com_") == true
-                    ? (eligibility?.communityId ?? resolvedCommunityId)
-                    : "com_\(eligibility?.communityId ?? resolvedCommunityId)"
-                let challenge = try await ApiClient.shared.createAltchaChallenge(
-                    scope: "community_join",
-                    action: "community:\(communityRef)"
-                )
-                try Task.checkCancellation()
-                altchaPayload = try await AltchaSolver.solve(challenge).payload
-                try Task.checkCancellation()
-            } else {
-                altchaPayload = nil
-            }
-            _ = try await ApiClient.shared.joinCommunity(communityId: resolvedCommunityId, altchaPayload: altchaPayload)
-            await loadCommunity()
-        } catch is CancellationError {
-            actionError = nil
-        } catch let error as ApiError {
-            actionError = error.displayMessage
-        } catch {
-            actionError = error.localizedDescription
-        }
-        isJoining = false
-    }
-
     private func toggleFollow() async {
         guard sessionManager.isAuthenticated else {
             showSignIn = true
@@ -1223,39 +1269,29 @@ struct CommunityView: View {
         votingPostIds.remove(postId)
     }
 
+    private func openComments(for post: LocalizedPostResponse) {
+        actionError = nil
+        Task {
+            await gateController.runPostReplyAccess(
+                isAuthenticated: sessionManager.isAuthenticated,
+                userId: sessionManager.user?.id,
+                communityId: resolvedCommunityId,
+                communityName: communityPreview?.community.displayName ?? "this community",
+                showSignIn: { showSignIn = true },
+                continueAfterAccess: {
+                    navigatePirateRoute(.post(post.id))
+                }
+            )
+            if let inlineError = gateController.inlineError {
+                actionError = inlineError
+            }
+        }
+    }
+
     private func postScore(_ post: LocalizedPostResponse) -> Int {
         let upvotes = post.upvoteCount ?? post.post.upvoteCount ?? 0
         let downvotes = post.downvoteCount ?? post.post.downvoteCount ?? 0
         return upvotes - downvotes
-    }
-
-    private var eligibilityText: String? {
-        guard let status = joinEligibility?.status else { return nil }
-        switch status {
-        case "already_joined":
-            return "You are a member."
-        case "joinable":
-            return "Join to post and reply here."
-        case "requestable":
-            return "Membership requires a request."
-        case "verification_required":
-            switch verificationProvider(for: joinEligibility) {
-            case "very":
-                return "Complete verification with Very to join."
-            case "self":
-                return "Complete ID verification to join."
-            default:
-                return "Complete verification to join."
-            }
-        case "pending_request":
-            return "Your join request is pending."
-        case "gate_failed":
-            return joinEligibility?.failureReason ?? "You do not meet this community's gate."
-        case "banned":
-            return "You cannot join this community."
-        default:
-            return status.replacingOccurrences(of: "_", with: " ")
-        }
     }
 
     private func joinButtonTitle(for status: String?) -> String {
@@ -1264,6 +1300,8 @@ struct CommunityView: View {
             return "Request to join"
         case "verification_required":
             switch verificationProvider(for: joinEligibility) {
+            case "altcha":
+                return "Join"
             case "very":
                 return "Verify with Very"
             case "self":
@@ -1273,6 +1311,8 @@ struct CommunityView: View {
             }
         case "gate_failed":
             switch verificationProvider(for: joinEligibility) {
+            case "altcha":
+                return "Join"
             case "very":
                 return "Verify with Very"
             case "self":
@@ -1286,11 +1326,49 @@ struct CommunityView: View {
     }
 
     private func verificationProvider(for eligibility: JoinEligibility?) -> String? {
-        let provider = eligibility?.suggestedVerificationProvider ?? eligibility?.humanVerificationLane
-        guard let normalized = provider?.lowercased() else { return nil }
-        if normalized.contains("very") { return "very" }
-        if normalized.contains("self") { return "self" }
-        return normalized
+        if let normalized = eligibility?.suggestedVerificationProvider?.lowercased() {
+            if normalized.contains("altcha") { return "altcha" }
+            if normalized.contains("very") { return "very" }
+            if normalized.contains("passport") { return "passport" }
+            if normalized.contains("self") { return "self" }
+            if !normalized.isEmpty { return normalized }
+        }
+        if requiresProofOfWork(eligibility) {
+            return "altcha"
+        }
+        if requiresSelfVerification(eligibility) {
+            return "self"
+        }
+        if eligibility?.missingCapabilities?.contains("very_unique_human") == true {
+            return "very"
+        }
+        if let normalized = eligibility?.humanVerificationLane?.lowercased(),
+           !normalized.isEmpty {
+            return normalized
+        }
+        return nil
+    }
+
+    private func requiresProofOfWork(_ eligibility: JoinEligibility?) -> Bool {
+        if eligibility?.missingCapabilities?.contains("altcha_pow") == true {
+            return true
+        }
+        return eligibility?.membershipGateSummaries?.contains(where: { $0.gateType == "altcha_pow" }) == true
+    }
+
+    private func requiresSelfVerification(_ eligibility: JoinEligibility?) -> Bool {
+        let selfCapabilities: Set<String> = ["age_over_18", "nationality", "gender"]
+        if eligibility?.missingCapabilities?.contains(where: { selfCapabilities.contains($0) }) == true {
+            return true
+        }
+
+        let selfGateTypes: Set<String> = ["minimum_age", "nationality", "gender", "self_minimum_age", "self_nationality", "self_excluded_nationality", "self_gender"]
+        return eligibility?.membershipGateSummaries?.contains(where: { summary in
+            if summary.gateType.map({ selfGateTypes.contains($0) }) == true {
+                return true
+            }
+            return summary.acceptedProviders?.contains(where: { $0.lowercased().contains("self") }) == true
+        }) == true
     }
 
     private func verificationRoute(for eligibility: JoinEligibility?) -> PirateRoute? {

@@ -286,6 +286,107 @@ struct AvatarView: View {
     }
 }
 
+private let defaultCommunityAvatarPalette: [(background: Color, foreground: Color)] = [
+    (Color(red: 0x24 / 255.0, green: 0x3F / 255.0, blue: 0x46 / 255.0), Color(red: 0xD9 / 255.0, green: 0xF0 / 255.0, blue: 0xF2 / 255.0)),
+    (Color(red: 0x31 / 255.0, green: 0x49 / 255.0, blue: 0x36 / 255.0), Color(red: 0xE2 / 255.0, green: 0xF3 / 255.0, blue: 0xDE / 255.0)),
+    (Color(red: 0x3F / 255.0, green: 0x3A / 255.0, blue: 0x5F / 255.0), Color(red: 0xEC / 255.0, green: 0xE8 / 255.0, blue: 0xFF / 255.0)),
+    (Color(red: 0x4B / 255.0, green: 0x45 / 255.0, blue: 0x55 / 255.0), Color(red: 0xF0 / 255.0, green: 0xEA / 255.0, blue: 0xF6 / 255.0)),
+    (Color(red: 0x33 / 255.0, green: 0x46 / 255.0, blue: 0x5F / 255.0), Color(red: 0xE6 / 255.0, green: 0xEE / 255.0, blue: 0xF8 / 255.0)),
+    (Color(red: 0x4C / 255.0, green: 0x4A / 255.0, blue: 0x37 / 255.0), Color(red: 0xF4 / 255.0, green: 0xF0 / 255.0, blue: 0xD9 / 255.0))
+]
+
+struct CommunityAvatarView: View {
+    let avatarRef: String?
+    let communityId: String
+    let displayName: String
+    let size: CGFloat
+
+    init(avatarRef: String?, communityId: String, displayName: String, size: CGFloat = 40) {
+        self.avatarRef = avatarRef
+        self.communityId = communityId
+        self.displayName = displayName
+        self.size = size
+    }
+
+    var body: some View {
+        if let url = nativeRenderableAvatarURL(from: avatarRef) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size, height: size)
+                        .clipShape(Circle())
+                case .failure, .empty:
+                    placeholder
+                @unknown default:
+                    placeholder
+                }
+            }
+            .frame(width: size, height: size)
+        } else {
+            placeholder
+        }
+    }
+
+    private var placeholder: some View {
+        let colors = defaultCommunityAvatarColors(communityId: communityId, displayName: displayName)
+        return ZStack {
+            Circle()
+                .fill(colors.background)
+            Circle()
+                .fill(.white.opacity(0.14))
+                .frame(width: size * 0.48, height: size * 0.48)
+                .offset(x: size * 0.25, y: -size * 0.25)
+            Path { path in
+                path.move(to: CGPoint(x: size * 0.18, y: size * 0.72))
+                path.addCurve(
+                    to: CGPoint(x: size * 0.82, y: size * 0.67),
+                    control1: CGPoint(x: size * 0.34, y: size * 0.54),
+                    control2: CGPoint(x: size * 0.62, y: size * 0.54)
+                )
+            }
+            .stroke(.white.opacity(0.14), style: StrokeStyle(lineWidth: max(3, size * 0.08), lineCap: .round))
+            Text(defaultCommunityAvatarInitials(displayName))
+                .font(.system(size: size * 0.34, weight: .bold))
+                .foregroundStyle(colors.foreground)
+                .minimumScaleFactor(0.6)
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .accessibilityLabel(displayName)
+    }
+}
+
+private func defaultCommunityAvatarColors(communityId: String, displayName: String) -> (background: Color, foreground: Color) {
+    let seed = "\(communityId.trimmingCharacters(in: .whitespacesAndNewlines)):\(sanitizeCommunityAvatarLabel(displayName))"
+    let index = defaultCommunityAvatarHash(seed) % defaultCommunityAvatarPalette.count
+    return defaultCommunityAvatarPalette[index]
+}
+
+private func defaultCommunityAvatarHash(_ seed: String) -> Int {
+    var hash: Int32 = 0
+    for scalar in seed.unicodeScalars {
+        hash = hash &* 31 &+ Int32(bitPattern: scalar.value)
+    }
+    return Int(UInt32(bitPattern: hash))
+}
+
+private func defaultCommunityAvatarInitials(_ displayName: String) -> String {
+    let parts = sanitizeCommunityAvatarLabel(displayName)
+        .split(separator: " ")
+        .prefix(2)
+    let initials = parts.compactMap { $0.first }.map { String($0).uppercased() }.joined()
+    return initials.isEmpty ? "C" : initials
+}
+
+private func sanitizeCommunityAvatarLabel(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines)
+        .split(whereSeparator: { $0.isWhitespace })
+        .joined(separator: " ")
+}
+
 struct CommunityRoleIconBadgeView: View {
     @Environment(\.pirateColors) private var colors
     let role: String?

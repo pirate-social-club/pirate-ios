@@ -23,10 +23,14 @@
 		<string>twitterkit</string>
 		<string>com.googleusercontent.apps</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Camera access is required for palm verification.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>VERY_SDK_KEY</key>
+	<string>$(VERY_SDK_KEY)</string>
 </dict>
 </plist>

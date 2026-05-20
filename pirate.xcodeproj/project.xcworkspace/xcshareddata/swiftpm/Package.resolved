@@ -47,6 +47,15 @@
       }
     },
     {
+      "identity" : "very-sdk-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/veroslabs/very-sdk-ios.git",
+      "state" : {
+        "revision" : "83f59c79564d07892074c288f72c135c89f9a9a1",
+        "version" : "1.0.44"
+      }
+    },
+    {
       "identity" : "swift-atomics",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-atomics.git",

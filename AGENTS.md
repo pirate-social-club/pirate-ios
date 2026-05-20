@@ -39,6 +39,10 @@ pirate/
 ## Build Commands
 
 ```bash
+# Build for iOS through Infisical-backed wrapper.
+# Defaults: INFISICAL_ENV=dev, INFISICAL_PATH=/services/api.
+./scripts/iosw.sh
+
 # Build for macOS (current dev machine)
 xcodebuild -project pirate.xcodeproj -scheme pirate \
   -destination 'platform=macOS' \
@@ -47,10 +51,12 @@ xcodebuild -project pirate.xcodeproj -scheme pirate \
   build
 
 # Build for iOS (requires iOS platform installed)
-xcodebuild -project pirate.xcodeproj -scheme pirate \
+./scripts/iosw.sh -project pirate.xcodeproj -scheme pirate \
   -destination 'platform=iOS Simulator,name=iPhone 16' \
   build
 ```
+
+`scripts/iosw.sh` runs `infisical run` when `VERY_SDK_KEY` is not already present, using `/services/api` by default, then passes `VERY_SDK_KEY` into `xcodebuild` through a temporary private `.xcconfig` so `Info.plist` can expand it without putting the raw key on the command line. Xcode.app builds also have an `Embed Infisical Build Secrets` build phase that reads `VERY_SDK_KEY` from the environment or Infisical and writes a generated `VerySecrets.plist` into the built iOS app bundle. Override with `PIRATE_IOS_INFISICAL_ENV`, `PIRATE_IOS_INFISICAL_PATH`, `PIRATE_IOS_INFISICAL_PROJECT_ID`, or `PIRATE_IOS_INFISICAL_PROJECT_CONFIG_DIR`. Set `PIRATE_IOS_SKIP_INFISICAL=1` to run without Infisical, or `PIRATE_IOS_REQUIRE_VERY_SDK_KEY=1` to fail builds that do not have native Very configured.
 
 ## Privy SDK Integration
 

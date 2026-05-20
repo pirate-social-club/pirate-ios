@@ -544,20 +544,20 @@ struct PostView: View {
         return HStack(spacing: 10) {
             if let route = communityRoute(for: post) {
                 NavigationLink(value: route) {
-                    AvatarView(
+                    CommunityAvatarView(
                         avatarRef: communityPreview?.community.avatarRef,
+                        communityId: post.communityId ?? communityLabel,
+                        displayName: communityPreview?.community.displayName ?? communityLabel,
                         size: 38,
-                        fallbackLabel: communityLabel,
-                        fallbackSeed: post.communityId ?? communityLabel
                     )
                 }
                 .buttonStyle(.plain)
             } else {
-                AvatarView(
+                CommunityAvatarView(
                     avatarRef: communityPreview?.community.avatarRef,
+                    communityId: post.communityId ?? communityLabel,
+                    displayName: communityPreview?.community.displayName ?? communityLabel,
                     size: 38,
-                    fallbackLabel: communityLabel,
-                    fallbackSeed: post.communityId ?? communityLabel
                 )
             }
 
@@ -678,7 +678,7 @@ struct PostView: View {
 
     private var bottomCommentAccessory: some View {
         Button {
-            openRootComposer()
+            beginRootComposer()
         } label: {
             HStack(spacing: 10) {
                 PirateIconView(icon: .chatCircle, size: 18, color: colors.textSecondary)
@@ -736,7 +736,7 @@ struct PostView: View {
                 )
 
                 ReplyActionPill(isActive: activeCommentComposer?.id == "reply:\(commentId)") {
-                    openReplyComposer(for: item, replies: replies, directReplyCount: directReplyCount)
+                    beginReplyComposer(for: item, replies: replies, directReplyCount: directReplyCount)
                 }
 
                 Spacer(minLength: 0)
@@ -1122,19 +1122,20 @@ struct PostView: View {
         actionError = nil
 
         guard !communityId.isEmpty else {
-            guard sessionManager.isAuthenticated else {
-                showSignIn = true
-                isVotingPost = false
-                return
-            }
-            do {
-                let altchaPayload = try await gateController.solvePostVotePayload(postId: targetPostId, value: value)
-                _ = try await ApiClient.shared.votePost(id: targetPostId, value: value, altchaPayload: altchaPayload)
-                await loadPost()
-            } catch let error as ApiError {
-                actionError = error.displayMessage
-            } catch {
-                actionError = error.localizedDescription
+            await gateController.runStandalonePostVote(
+                isAuthenticated: sessionManager.isAuthenticated,
+                communityId: communityId,
+                communityName: communityName,
+                postId: targetPostId,
+                value: value,
+                showSignIn: { showSignIn = true },
+                perform: { altchaPayload in
+                    _ = try await ApiClient.shared.votePost(id: targetPostId, value: value, altchaPayload: altchaPayload)
+                    await loadPost(blocking: false)
+                }
+            )
+            if let inlineError = gateController.inlineError {
+                actionError = inlineError
             }
             isVotingPost = false
             return
@@ -1150,7 +1151,7 @@ struct PostView: View {
             showSignIn: { showSignIn = true },
             perform: { altchaPayload in
                 _ = try await ApiClient.shared.votePost(id: targetPostId, value: value, altchaPayload: altchaPayload)
-                await loadPost()
+                await loadPost(blocking: false)
             }
         )
         if let inlineError = gateController.inlineError {
@@ -1167,14 +1168,22 @@ struct PostView: View {
         guard !votingCommentIds.contains(commentId) else { return }
         votingCommentIds.insert(commentId)
         actionError = nil
-        do {
-            let altchaPayload = try await gateController.solveCommentVotePayload(commentId: commentId, value: value)
-            _ = try await ApiClient.shared.voteComment(id: commentId, value: value, altchaPayload: altchaPayload)
-            await refreshCommentsKeepingReplies()
-        } catch let error as ApiError {
-            actionError = error.displayMessage
-        } catch {
-            actionError = error.localizedDescription
+        let currentCommunityId = post?.post.communityId ?? ""
+        let currentCommunityName = communityPreview?.community.displayName ?? "this community"
+        await gateController.runCommentVote(
+            isAuthenticated: sessionManager.isAuthenticated,
+            communityId: currentCommunityId,
+            communityName: currentCommunityName,
+            commentId: commentId,
+            value: value,
+            showSignIn: { showSignIn = true },
+            perform: { altchaPayload in
+                _ = try await ApiClient.shared.voteComment(id: commentId, value: value, altchaPayload: altchaPayload)
+                await refreshCommentsKeepingReplies()
+            }
+        )
+        if let inlineError = gateController.inlineError {
+            actionError = inlineError
         }
         votingCommentIds.remove(commentId)
     }
@@ -1189,6 +1198,7 @@ struct PostView: View {
         isSubmittingCompose = true
         actionError = nil
         do {
+            let altchaPayload = try await resolveCommentAltchaPayloadIfNeeded(target: target)
             switch target {
             case .root:
                 guard let communityId = post?.post.communityId else {
@@ -1198,7 +1208,8 @@ struct PostView: View {
                 try await ApiClient.shared.createComment(
                     communityId: communityId,
                     postId: postId,
-                    body: CreateCommentRequest(body: text, identityMode: "public")
+                    body: CreateCommentRequest(body: text, identityMode: "public"),
+                    altchaPayload: altchaPayload
                 )
                 newComment = ""
                 composeText = ""
@@ -1208,7 +1219,8 @@ struct PostView: View {
                 let parentCommentId = item.comment.id
                 try await ApiClient.shared.createReply(
                     commentId: parentCommentId,
-                    body: CreateCommentRequest(body: text, identityMode: "public")
+                    body: CreateCommentRequest(body: text, identityMode: "public"),
+                    altchaPayload: altchaPayload
                 )
                 replyDrafts[parentCommentId] = ""
                 composeText = ""
@@ -1301,20 +1313,89 @@ struct PostView: View {
         return upvotes - downvotes
     }
 
-    private func openRootComposer() {
+    private func resolveCommentAltchaPayloadIfNeeded(target: CommentComposerTarget) async throws -> String? {
+        guard
+            let communityId = post?.post.communityId,
+            await shouldSolveCommentProofOfWork(communityId: communityId)
+        else { return nil }
+
+        switch target {
+        case .root:
+            return try await gateController.solvePostCommentPayload(postId: postId)
+        case .reply(let item):
+            return try await gateController.solveCommentReplyPayload(commentId: item.comment.id)
+        }
+    }
+
+    private func shouldSolveCommentProofOfWork(communityId: String) async -> Bool {
+        if communityPreview?.membershipGateSummaries?.contains(where: { $0.gateType == "altcha_pow" }) == true {
+            return true
+        }
+        return await gateController.communityRequiresProofOfWork(
+            communityId: communityId,
+            isAuthenticated: sessionManager.isAuthenticated,
+            userId: sessionManager.user?.id
+        )
+    }
+
+    private func beginRootComposer() {
         guard sessionManager.isAuthenticated else {
             showSignIn = true
             return
         }
+        guard let communityId = post?.post.communityId else {
+            presentRootComposer()
+            return
+        }
+        Task {
+            await gateController.runPostReplyAccess(
+                isAuthenticated: sessionManager.isAuthenticated,
+                userId: sessionManager.user?.id,
+                communityId: communityId,
+                communityName: communityPreview?.community.displayName ?? "this community",
+                showSignIn: { showSignIn = true },
+                continueAfterAccess: {
+                    presentRootComposer()
+                }
+            )
+            if let inlineError = gateController.inlineError {
+                actionError = inlineError
+            }
+        }
+    }
+
+    private func presentRootComposer() {
         composeText = newComment
         activeCommentComposer = .root
     }
 
-    private func openReplyComposer(for item: CommentListItem, replies: [CommentListItem], directReplyCount: Int) {
+    private func beginReplyComposer(for item: CommentListItem, replies: [CommentListItem], directReplyCount: Int) {
         guard sessionManager.isAuthenticated else {
             showSignIn = true
             return
         }
+        guard let communityId = post?.post.communityId else {
+            presentReplyComposer(for: item, replies: replies, directReplyCount: directReplyCount)
+            return
+        }
+        Task {
+            await gateController.runPostReplyAccess(
+                isAuthenticated: sessionManager.isAuthenticated,
+                userId: sessionManager.user?.id,
+                communityId: communityId,
+                communityName: communityPreview?.community.displayName ?? "this community",
+                showSignIn: { showSignIn = true },
+                continueAfterAccess: {
+                    presentReplyComposer(for: item, replies: replies, directReplyCount: directReplyCount)
+                }
+            )
+            if let inlineError = gateController.inlineError {
+                actionError = inlineError
+            }
+        }
+    }
+
+    private func presentReplyComposer(for item: CommentListItem, replies: [CommentListItem], directReplyCount: Int) {
         let commentId = item.comment.id
         composeText = replyDrafts[commentId] ?? ""
         activeCommentComposer = .reply(item)
@@ -1364,7 +1445,8 @@ struct PostView: View {
                 communityId: community.communityId,
                 displayName: community.displayName,
                 routeSlug: community.routeSlug,
-                namespaceVerificationId: community.namespaceVerificationId
+                namespaceVerificationId: community.namespaceVerificationId,
+                routeSlugImpliesVerified: true
             )
         }
         if let communityId = post.communityId {
@@ -1377,7 +1459,8 @@ struct PostView: View {
         guard let community = communityPreview?.community else { return false }
         return !isCommunityRouteVerified(
             routeSlug: community.routeSlug,
-            namespaceVerificationId: community.namespaceVerificationId
+            namespaceVerificationId: community.namespaceVerificationId,
+            routeSlugImpliesVerified: true
         )
     }
 

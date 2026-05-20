@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct VotePill: View {
     @Environment(\.pirateColors) private var colors
@@ -33,7 +36,6 @@ struct VotePill: View {
         .frame(height: 38)
         .background(colors.surfaceSubtle, in: RoundedRectangle(cornerRadius: radii.full))
         .overlay(RoundedRectangle(cornerRadius: radii.full).stroke(colors.borderSoft, lineWidth: 1))
-        .opacity(disabled ? 0.55 : 1)
     }
 
     private func voteButton(icon: PirateIcon, value: Int, active: Bool, label: String) -> some View {
@@ -43,10 +45,19 @@ struct VotePill: View {
         } label: {
             PirateIconView(icon: icon, size: 17, color: active ? colors.accentBrand : colors.textSecondary)
                 .frame(width: 28, height: 30)
+                .opacity(disabled && !active ? 0.55 : 1)
         }
         .disabled(disabled)
-        .buttonStyle(.plain)
+        .buttonStyle(VoteArrowButtonStyle())
         .accessibilityLabel(label)
+    }
+}
+
+private struct VoteArrowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.88 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -54,8 +65,25 @@ struct CommentCountPill: View {
     @Environment(\.pirateColors) private var colors
     @Environment(\.pirateRadii) private var radii
     let count: Int
+    var onComment: (() -> Void)? = nil
 
     var body: some View {
+        if let onComment {
+            Button {
+                makeCommentTapFeedback()
+                onComment()
+            } label: {
+                content
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(count) comments")
+        } else {
+            content
+                .accessibilityLabel("\(count) comments")
+        }
+    }
+
+    private var content: some View {
         HStack(spacing: 7) {
             PirateIconView(icon: .chatCircle, size: 17, color: colors.textPrimary)
             Text("\(count)")
@@ -67,7 +95,15 @@ struct CommentCountPill: View {
         .frame(height: 38)
         .background(colors.surfaceSubtle, in: RoundedRectangle(cornerRadius: radii.full))
         .overlay(RoundedRectangle(cornerRadius: radii.full).stroke(colors.borderSoft, lineWidth: 1))
-        .accessibilityLabel("\(count) comments")
+        .contentShape(RoundedRectangle(cornerRadius: radii.full))
+    }
+
+    private func makeCommentTapFeedback() {
+        #if os(iOS)
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.prepare()
+        generator.impactOccurred()
+        #endif
     }
 }
 
