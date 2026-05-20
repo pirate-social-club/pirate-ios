@@ -31,6 +31,11 @@ struct PirateScaffold: View {
             #if DEBUG
             .onAppear(perform: applyDebugLaunchRouteIfNeeded)
             #endif
+            .onChange(of: sessionManager.isAuthenticated) { _, isAuthenticated in
+                if !isAuthenticated {
+                    resetNavigationAfterLogout()
+                }
+            }
         }
     }
 
@@ -44,6 +49,7 @@ struct PirateScaffold: View {
                         routeDestination(for: route)
                     }
             }
+            .pirateNavigationChrome(colors: colors)
             .environment(\.navigatePirateRoute) { route in
                 homePath.append(route)
             }
@@ -54,6 +60,7 @@ struct PirateScaffold: View {
                         routeDestination(for: route)
                     }
             }
+            .pirateNavigationChrome(colors: colors)
             .environment(\.navigatePirateRoute) { route in
                 walletPath.append(route)
             }
@@ -64,6 +71,7 @@ struct PirateScaffold: View {
                         routeDestination(for: route)
                     }
             }
+            .pirateNavigationChrome(colors: colors)
             .environment(\.navigatePirateRoute) { route in
                 chatPath.append(route)
             }
@@ -74,6 +82,7 @@ struct PirateScaffold: View {
                         routeDestination(for: route)
                     }
             }
+            .pirateNavigationChrome(colors: colors)
             .environment(\.navigatePirateRoute) { route in
                 notificationsPath.append(route)
             }
@@ -84,6 +93,7 @@ struct PirateScaffold: View {
                         routeDestination(for: route)
                     }
             }
+            .pirateNavigationChrome(colors: colors)
             .environment(\.navigatePirateRoute) { route in
                 mePath.append(route)
             }
@@ -135,6 +145,10 @@ struct PirateScaffold: View {
             case "createCommunity", "communities/new":
                 selectedTab = .home
                 homePath = [.createCommunity]
+                return
+            case "settings/profile", "profileSettings":
+                selectedTab = .me
+                mePath = [.settingsSection("profile")]
                 return
             default:
                 break
@@ -195,6 +209,15 @@ struct PirateScaffold: View {
         }
 
         homeScrollToTopTrigger += 1
+    }
+
+    private func resetNavigationAfterLogout() {
+        selectedTab = .home
+        homePath.removeAll()
+        walletPath.removeAll()
+        chatPath.removeAll()
+        notificationsPath.removeAll()
+        mePath.removeAll()
     }
 
     private func makeTabReselectionFeedback() {

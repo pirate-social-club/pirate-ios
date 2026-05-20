@@ -28,7 +28,7 @@ enum ProfilePageTab: String, CaseIterable, Identifiable {
         switch self {
         case .overview: return .squaresFour
         case .posts: return .article
-        case .comments: return .chatCircle
+        case .comments: return .comments
         case .wallet: return .wallet
         }
     }
@@ -104,7 +104,14 @@ struct PirateProfilePage: View {
 
     private var tabs: [ProfilePageTab] {
         ProfilePageTab.allCases.filter { tab in
-            tab != .wallet || data.hasWalletTab
+            switch tab {
+            case .wallet:
+                return data.hasWalletTab
+            case .comments:
+                return data.viewerContext != .selfProfile || data.hasWalletTab
+            default:
+                return true
+            }
         }
     }
 
@@ -139,6 +146,9 @@ struct PirateProfilePage: View {
         .background(colors.bgPage)
         .onChange(of: data.hasWalletTab) { _, hasWalletTab in
             if selectedTab == .wallet && !hasWalletTab {
+                selectedTab = .overview
+            }
+            if selectedTab == .comments && data.viewerContext == .selfProfile && !hasWalletTab {
                 selectedTab = .overview
             }
         }
@@ -834,25 +844,6 @@ private struct ProfileActivityMetaLine: View {
 
             Spacer()
         }
-    }
-}
-
-private struct ProfilePanelShell: View {
-    @Environment(\.pirateColors) private var colors
-
-    let emptyCopy: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Divider().overlay(colors.borderSoft)
-            Text(emptyCopy)
-                .font(PirateTokens.Typography.body)
-                .foregroundStyle(colors.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 28)
-            Divider().overlay(colors.borderSoft)
-        }
-        .padding(.horizontal, PirateTokens.pageGutter)
     }
 }
 

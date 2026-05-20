@@ -18,6 +18,7 @@ enum PirateIcon {
     case chatCircle
     case check
     case checkCircle
+    case comments
     case copy
     case crownCross
     case currencyBtc
@@ -101,6 +102,8 @@ struct PirateSystemIconView: View {
             return (.shield, false)
         case "bubble.left":
             return (.chatCircle, false)
+        case "bubble.left.and.text.bubble.right":
+            return (.comments, false)
         case "calendar":
             return (.calendar, false)
         case "checkmark":
@@ -227,6 +230,8 @@ private struct PirateIconGlyph: View {
             return "check"
         case .checkCircle:
             return "check-circle"
+        case .comments:
+            return "comments"
         case .copy:
             return "copy"
         case .crownCross:

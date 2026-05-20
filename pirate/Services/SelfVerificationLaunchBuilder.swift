@@ -136,12 +136,8 @@ enum SelfVerificationLaunchBuilder {
 
     private static func intValue(_ keys: [String], in object: [String: JSONValue]) -> Int? {
         for key in keys {
-            guard let value = object[key] else { continue }
-            switch value {
-            case .int(let int): return int
-            case .double(let double): return Int(double)
-            case .string(let string): if let int = Int(string) { return int }
-            default: break
+            if let value = object[key]?.intValue {
+                return value
             }
         }
         return nil
@@ -149,13 +145,8 @@ enum SelfVerificationLaunchBuilder {
 
     private static func boolValue(_ keys: [String], in object: [String: JSONValue]) -> Bool? {
         for key in keys {
-            guard let value = object[key] else { continue }
-            switch value {
-            case .bool(let bool): return bool
-            case .string(let string):
-                if string == "true" { return true }
-                if string == "false" { return false }
-            default: break
+            if let value = object[key]?.boolValue {
+                return value
             }
         }
         return nil

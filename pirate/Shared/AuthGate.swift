@@ -50,29 +50,3 @@ struct AuthGate<Content: View>: View {
         }
     }
 }
-
-struct InlineAuthGate<Content: View>: View {
-    @Environment(\.pirateColors) private var colors
-    let isAuthenticated: Bool
-    @Binding var showSignIn: Bool
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        if isAuthenticated {
-            content()
-        } else {
-            content()
-                .blur(radius: 2)
-                .overlay {
-                    Button {
-                        showSignIn = true
-                    } label: {
-                        Text("Sign in to continue")
-                            .font(PirateTokens.Typography.smallStrong)
-                            .foregroundStyle(colors.accentBrand)
-                    }
-                    .buttonStyle(.plain)
-                }
-        }
-    }
-}

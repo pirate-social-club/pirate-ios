@@ -165,7 +165,7 @@ struct WalletView: View {
 
     private var balanceSection: some View {
         let walletAddress = routeWalletAddress
-        let showWalletActions = walletAddress != nil
+        let showWalletActions = sessionManager.isAuthenticated
 
         return VStack(alignment: .leading, spacing: 0) {
             Text("Total balance")
@@ -178,13 +178,20 @@ struct WalletView: View {
                 .padding(.top, 2)
             if showWalletActions {
                 HStack(spacing: 12) {
-                    WalletOutlineButton(title: "Send", enabled: !isZeroUsdAmount(totalBalanceUsd)) {}
-                    WalletOutlineButton(title: "Receive", enabled: true) {
+                    WalletOutlineButton(title: "Send", enabled: walletAddress != nil && !isZeroUsdAmount(totalBalanceUsd)) {}
+                    WalletOutlineButton(title: "Receive", enabled: walletAddress != nil) {
                         receiveChainId = defaultReceiveChainId
                         showReceiveSheet = true
                     }
                 }
                 .padding(.top, 16)
+
+                if walletAddress == nil {
+                    Text("No wallet is linked to this account yet.")
+                        .font(PirateTokens.Typography.small)
+                        .foregroundStyle(colors.textSecondary)
+                        .padding(.top, 10)
+                }
             } else if !sessionManager.isAuthenticated {
                 Button {
                     showSignIn = true

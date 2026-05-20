@@ -96,7 +96,7 @@ enum AltchaSolver {
         keyLength: Int
     ) -> Data {
         var derived = Data(count: keyLength)
-        derived.withUnsafeMutableBytes { derivedOut in
+        _ = derived.withUnsafeMutableBytes { derivedOut in
             password.withUnsafeBytes { passIn in
                 salt.withUnsafeBytes { saltIn in
                     CCKeyDerivationPBKDF(

@@ -1,45 +1,5 @@
 import SwiftUI
 
-@MainActor
-final class PostSnapshotCache {
-    static let shared = PostSnapshotCache()
-
-    private var postsById: [String: LocalizedPostResponse] = [:]
-    private var insertionOrder: [String] = []
-    private let limit = 150
-
-    private init() {}
-
-    func post(id: String) -> LocalizedPostResponse? {
-        postsById[id]
-    }
-
-    func store(_ post: LocalizedPostResponse) {
-        let id = post.id
-        if postsById[id] == nil {
-            insertionOrder.append(id)
-        }
-        postsById[id] = post
-        trimIfNeeded()
-    }
-
-    func store(contentsOf posts: [LocalizedPostResponse]) {
-        posts.forEach(store)
-    }
-
-    private func trimIfNeeded() {
-        while insertionOrder.count > limit {
-            let id = insertionOrder.removeFirst()
-            postsById[id] = nil
-        }
-    }
-}
-
-private enum PostReadMode {
-    case authenticated
-    case publicRead
-}
-
 private enum CommentComposerTarget: Identifiable {
     case root
     case reply(CommentListItem)
@@ -317,7 +277,7 @@ struct PostView: View {
     @State private var isLoadingSongCommerce = false
     @State private var songCommerceError: String?
     @State private var songPurchaseMessage: String?
-    @State private var readMode: PostReadMode = .publicRead
+    @State private var readMode: PirateReadMode = .publicRead
     @State private var isVotingPost = false
     @State private var activeCommentComposer: CommentComposerTarget?
     @State private var composeText = ""
@@ -909,7 +869,7 @@ struct PostView: View {
         songPurchaseMessage = "Song checkout is not available in the iOS app yet."
     }
 
-    private func loadPostForCurrentSession() async throws -> (post: LocalizedPostResponse, readMode: PostReadMode) {
+    private func loadPostForCurrentSession() async throws -> (post: LocalizedPostResponse, readMode: PirateReadMode) {
         if sessionManager.isAuthenticated {
             do {
                 return (try await ApiClient.shared.authenticatedPost(id: postId), .authenticated)
@@ -931,7 +891,7 @@ struct PostView: View {
         return try? await ApiClient.shared.profile(userId: userId)
     }
 
-    private func loadCommunityPreview(communityId: String, readMode requestedReadMode: PostReadMode) async -> CommunityPreview? {
+    private func loadCommunityPreview(communityId: String, readMode requestedReadMode: PirateReadMode) async -> CommunityPreview? {
         if sessionManager.isAuthenticated && requestedReadMode == .authenticated {
             do {
                 return try await ApiClient.shared.community(id: communityId)
@@ -950,7 +910,7 @@ struct PostView: View {
         cursor: String? = nil,
         sort: String,
         limit: Int,
-        readMode requestedReadMode: PostReadMode? = nil
+        readMode requestedReadMode: PirateReadMode? = nil
     ) async throws -> CommentListResponse {
         let mode = requestedReadMode ?? readMode
         if sessionManager.isAuthenticated && mode == .authenticated {

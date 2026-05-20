@@ -24,6 +24,15 @@ extension View {
         #endif
     }
 
+    func pirateNavigationChrome(colors: PirateColorTokens) -> some View {
+        self
+            .inlineNavigationBarTitle()
+            .tint(colors.textPrimary)
+            #if os(iOS)
+            .toolbarBackground(colors.bgPage, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            #endif
+    }
 }
 
 func formatRelativeTimestamp(_ value: String?) -> String {
@@ -443,53 +452,6 @@ struct CommunityNameLabel: View {
                 .accessibilityLabel("Unverified community")
             }
         }
-    }
-}
-
-struct VoteButton: View {
-    @Environment(\.pirateColors) private var colors
-    let voteValue: Int?
-    let onVote: (Int) -> Void
-    let isUpvote: Bool
-
-    init(voteValue: Int?, onVote: @escaping (Int) -> Void, isUpvote: Bool = true) {
-        self.voteValue = voteValue
-        self.onVote = onVote
-        self.isUpvote = isUpvote
-    }
-
-    var body: some View {
-        Button {
-            if isUpvote {
-                guard voteValue != 1 else { return }
-                onVote(1)
-            } else {
-                guard voteValue != -1 else { return }
-                onVote(-1)
-            }
-        } label: {
-            PirateSystemIconView(systemName: isUpvote ? "arrow.up" : "arrow.down", size: 16)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(isActive ? colors.accentBrand : colors.textSecondary)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var isActive: Bool {
-        guard let voteValue = voteValue else { return false }
-        return isUpvote ? voteValue == 1 : voteValue == -1
-    }
-}
-
-struct SectionHeader: View {
-    @Environment(\.pirateColors) private var colors
-    let title: String
-
-    var body: some View {
-        Text(title)
-            .font(PirateTokens.Typography.h3)
-            .foregroundStyle(colors.textPrimary)
-            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

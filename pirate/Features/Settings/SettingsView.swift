@@ -24,16 +24,13 @@ struct SettingsView: View {
         List {
             Section {
                 NavigationLink(value: PirateRoute.settingsSection("profile")) {
-                    Label("Profile", systemImage: "person")
+                    Label("Edit Profile", systemImage: "person.crop.circle")
                 }
                 NavigationLink(value: PirateRoute.settingsSection("preferences")) {
                     Label("Preferences", systemImage: "slider.horizontal.3")
                 }
                 NavigationLink(value: PirateRoute.settingsSection("domains")) {
-                    Label("Domains", systemImage: "globe")
-                }
-                NavigationLink(value: PirateRoute.settingsSection("agents")) {
-                    Label("Agents", systemImage: "cpu")
+                    Label("Handles", systemImage: "at")
                 }
             }
 
@@ -48,6 +45,7 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
         .background(colors.bgPage)
         .navigationTitle("Settings")
+        .pirateNavigationChrome(colors: colors)
         .confirmationDialog("Sign Out", isPresented: $showSignOutConfirmation) {
             Button("Sign Out", role: .destructive) {
                 Task { await sessionManager.logout() }
@@ -167,6 +165,7 @@ struct SettingsSectionView: View {
         }
         .background(colors.bgPage)
         .navigationTitle(sectionTitle)
+        .pirateNavigationChrome(colors: colors)
         .onAppear {
             syncLocalStateFromProfile()
         }
@@ -256,10 +255,6 @@ struct SettingsSectionView: View {
                         await saveProfile()
                     }
                 }
-            }
-
-            settingsSection("Pirate handle") {
-                pirateHandleSection
             }
         }
     }
@@ -804,7 +799,7 @@ struct SettingsSectionView: View {
         switch section {
         case "profile": return "Profile Settings"
         case "preferences": return "Preferences"
-        case "domains": return "Domains"
+        case "domains": return "Handles"
         case "agents": return "Agents"
         default: return section.capitalized
         }

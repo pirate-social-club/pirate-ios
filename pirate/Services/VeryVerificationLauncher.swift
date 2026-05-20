@@ -128,24 +128,7 @@ enum VeryVerificationLauncher {
 
     private static func launchMode(from session: VerificationSession) -> String? {
         guard let launch = session.launch else { return nil }
-        return firstStringValue(named: "mode", in: launch)
-    }
-
-    private static func firstStringValue(named key: String, in value: JSONValue) -> String? {
-        switch value {
-        case .object(let object):
-            if let match = object[key]?.stringValue { return match }
-            for child in object.values {
-                if let match = firstStringValue(named: key, in: child) { return match }
-            }
-        case .array(let values):
-            for child in values {
-                if let match = firstStringValue(named: key, in: child) { return match }
-            }
-        default:
-            return nil
-        }
-        return nil
+        return launch.firstStringValue(named: "mode")
     }
 
     private static func failureMessage(for error: ApiError) -> String {

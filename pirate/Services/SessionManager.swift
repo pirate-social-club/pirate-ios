@@ -9,9 +9,8 @@ final class SessionManager {
     var profile: Profile? { currentSession?.profile }
     var user: User? { currentSession?.user }
     var primaryWalletAddress: String? {
-        guard let attachments = currentSession?.walletAttachments else { return nil }
-        let primary = attachments.first { $0.isPrimary == true }
-        return primary?.walletAddress ?? attachments.first?.walletAddress
+        currentSession?.profile.primaryWalletAddress?.nilIfEmpty
+            ?? primaryWalletAddress(from: currentSession?.walletAttachments)
     }
 
     private let sessionStore: SessionStore
@@ -92,5 +91,12 @@ final class SessionManager {
         self.currentSession = nil
         sessionStore.clear()
         apiClient.setAccessToken(nil)
+    }
+
+    private func primaryWalletAddress(from attachments: [WalletAttachmentSummary]?) -> String? {
+        guard let attachments else { return nil }
+        let primary = attachments.first { $0.isPrimary == true && $0.walletAddress.nilIfEmpty != nil }
+        return primary?.walletAddress.nilIfEmpty
+            ?? attachments.first { $0.walletAddress.nilIfEmpty != nil }?.walletAddress.nilIfEmpty
     }
 }

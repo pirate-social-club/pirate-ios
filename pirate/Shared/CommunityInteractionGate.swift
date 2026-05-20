@@ -11,9 +11,8 @@ enum CommunityInteractionGateKind: Equatable {
     case joinToVote
     case proveAndJoinToVote
     case proveAndVote
-    case verifyToVote(provider: String)
-    case verifyToReply(provider: String)
-    case passportToVote
+    case verification(provider: String)
+    case passportChallenge
     case pending
     case blocked
     case error
@@ -306,7 +305,7 @@ final class CommunityInteractionGateController {
             solverTask = Task { await joinThenVote(needsJoinAltcha: true) }
         case .proveAndVote:
             break
-        case .passportToVote:
+        case .passportChallenge:
             break
         case .error:
             if pendingCommunityJoin != nil {
@@ -734,35 +733,22 @@ final class CommunityInteractionGateController {
         }
 
         if provider == "passport" {
-            sheetState = CommunityInteractionGateSheetState(
-                kind: .passportToVote,
+            sheetState = passportChallengeSheet(
                 communityId: pending.communityId,
                 communityName: pending.communityName,
-                title: "Improve wallet score",
-                message: "Your wallet lacks meaningful history, so we cannot confirm you're human.",
-                primaryTitle: "Improve Score",
-                secondaryTitle: "Cancel",
-                requirements: requirements,
-                externalURL: URL(string: "https://app.passport.xyz/")
+                requirements: requirements
             )
             return
         }
 
-        let route: PirateRoute = provider == "very"
-            ? .verificationVery(eligibility.suggestedVerificationIntent ?? "community_join")
-            : .verificationSelf(eligibility.suggestedVerificationIntent ?? "community_join")
-        sheetState = CommunityInteractionGateSheetState(
-            kind: .verifyToVote(provider: provider ?? "self"),
+        sheetState = verificationSheet(
             communityId: pending.communityId,
             communityName: pending.communityName,
             title: "Verify to join",
             message: "Complete verification, then return here to join.",
-            primaryTitle: provider == "very" ? "Verify with Very" : "Verify with ID",
-            secondaryTitle: "Cancel",
-            requirements: requirements,
-            route: route,
-            selfRequestedCapabilities: selfRequestedCapabilities(for: eligibility),
-            selfVerificationRequirements: verificationRequirements(for: eligibility.membershipGateSummaries)
+            provider: provider,
+            eligibility: eligibility,
+            requirements: requirements
         )
     }
 
@@ -809,35 +795,22 @@ final class CommunityInteractionGateController {
         }
 
         if provider == "passport" {
-            sheetState = CommunityInteractionGateSheetState(
-                kind: .passportToVote,
+            sheetState = passportChallengeSheet(
                 communityId: pending.communityId,
                 communityName: pending.communityName,
-                title: "Improve wallet score",
-                message: "Your wallet lacks meaningful history, so we cannot confirm you're human.",
-                primaryTitle: "Improve Score",
-                secondaryTitle: "Cancel",
-                requirements: requirements,
-                externalURL: URL(string: "https://app.passport.xyz/")
+                requirements: requirements
             )
             return
         }
 
-        let route: PirateRoute = provider == "very"
-            ? .verificationVery(eligibility.suggestedVerificationIntent ?? "community_join")
-            : .verificationSelf(eligibility.suggestedVerificationIntent ?? "community_join")
-        sheetState = CommunityInteractionGateSheetState(
-            kind: .verifyToVote(provider: provider ?? "self"),
+        sheetState = verificationSheet(
             communityId: pending.communityId,
             communityName: pending.communityName,
             title: "Verify to post",
             message: "Complete verification, then return here to create your post.",
-            primaryTitle: provider == "very" ? "Verify with Very" : "Verify with ID",
-            secondaryTitle: "Cancel",
-            requirements: requirements,
-            route: route,
-            selfRequestedCapabilities: selfRequestedCapabilities(for: eligibility),
-            selfVerificationRequirements: verificationRequirements(for: eligibility.membershipGateSummaries)
+            provider: provider,
+            eligibility: eligibility,
+            requirements: requirements
         )
     }
 
@@ -870,35 +843,22 @@ final class CommunityInteractionGateController {
         }
 
         if provider == "passport" {
-            sheetState = CommunityInteractionGateSheetState(
-                kind: .passportToVote,
+            sheetState = passportChallengeSheet(
                 communityId: pending.communityId,
                 communityName: pending.communityName,
-                title: "Improve wallet score",
-                message: "Your wallet lacks meaningful history, so we cannot confirm you're human.",
-                primaryTitle: "Improve Score",
-                secondaryTitle: "Cancel",
-                requirements: requirements,
-                externalURL: URL(string: "https://app.passport.xyz/")
+                requirements: requirements
             )
             return
         }
 
-        let route: PirateRoute = provider == "very"
-            ? .verificationVery(eligibility.suggestedVerificationIntent ?? "community_join")
-            : .verificationSelf(eligibility.suggestedVerificationIntent ?? "community_join")
-        sheetState = CommunityInteractionGateSheetState(
-            kind: .verifyToReply(provider: provider ?? "self"),
+        sheetState = verificationSheet(
             communityId: pending.communityId,
             communityName: pending.communityName,
             title: "Verify to comment",
             message: "Complete verification, then return here to comment.",
-            primaryTitle: provider == "very" ? "Verify with Very" : "Verify with ID",
-            secondaryTitle: "Cancel",
-            requirements: requirements,
-            route: route,
-            selfRequestedCapabilities: selfRequestedCapabilities(for: eligibility),
-            selfVerificationRequirements: verificationRequirements(for: eligibility.membershipGateSummaries)
+            provider: provider,
+            eligibility: eligibility,
+            requirements: requirements
         )
     }
 
@@ -931,36 +891,72 @@ final class CommunityInteractionGateController {
         }
 
         if provider == "passport" {
-            sheetState = CommunityInteractionGateSheetState(
-                kind: .passportToVote,
+            sheetState = passportChallengeSheet(
                 communityId: pending.communityId,
                 communityName: pending.communityName,
-                title: "Improve wallet score",
-                message: "Your wallet lacks meaningful history, so we cannot confirm you're human.",
-                primaryTitle: "Improve Score",
-                secondaryTitle: "Cancel",
-                requirements: requirements,
-                externalURL: URL(string: "https://app.passport.xyz/")
+                requirements: requirements
             )
             return
         }
 
-        let route: PirateRoute = provider == "very"
-            ? .verificationVery(eligibility.suggestedVerificationIntent ?? "community_join")
-            : .verificationSelf(eligibility.suggestedVerificationIntent ?? "community_join")
-        sheetState = CommunityInteractionGateSheetState(
-            kind: .verifyToVote(provider: provider ?? "self"),
+        sheetState = verificationSheet(
             communityId: pending.communityId,
             communityName: pending.communityName,
             title: "Verify to vote",
             message: "Complete verification, then return here to finish your vote.",
+            provider: provider,
+            eligibility: eligibility,
+            requirements: requirements
+        )
+    }
+
+    private func passportChallengeSheet(
+        communityId: String,
+        communityName: String,
+        requirements: [MembershipGateSummary]
+    ) -> CommunityInteractionGateSheetState {
+        CommunityInteractionGateSheetState(
+            kind: .passportChallenge,
+            communityId: communityId,
+            communityName: communityName,
+            title: "Improve wallet score",
+            message: "Your wallet lacks meaningful history, so we cannot confirm you're human.",
+            primaryTitle: "Improve Score",
+            secondaryTitle: "Cancel",
+            requirements: requirements,
+            externalURL: URL(string: "https://app.passport.xyz/")
+        )
+    }
+
+    private func verificationSheet(
+        communityId: String,
+        communityName: String,
+        title: String,
+        message: String,
+        provider: String?,
+        eligibility: JoinEligibility,
+        requirements: [MembershipGateSummary]
+    ) -> CommunityInteractionGateSheetState {
+        CommunityInteractionGateSheetState(
+            kind: .verification(provider: provider ?? "self"),
+            communityId: communityId,
+            communityName: communityName,
+            title: title,
+            message: message,
             primaryTitle: provider == "very" ? "Verify with Very" : "Verify with ID",
             secondaryTitle: "Cancel",
             requirements: requirements,
-            route: route,
+            route: verificationRoute(provider: provider, intent: eligibility.suggestedVerificationIntent),
             selfRequestedCapabilities: selfRequestedCapabilities(for: eligibility),
             selfVerificationRequirements: verificationRequirements(for: eligibility.membershipGateSummaries)
         )
+    }
+
+    private func verificationRoute(provider: String?, intent: String?) -> PirateRoute {
+        let verificationIntent = intent ?? "community_join"
+        return provider == "very"
+            ? .verificationVery(verificationIntent)
+            : .verificationSelf(verificationIntent)
     }
 
     private func presentBlockedSheet(eligibility: JoinEligibility, title: String, message: String) {
@@ -1415,7 +1411,7 @@ final class CommunityInteractionGateController {
 
     private var isVerificationSheetActive: Bool {
         switch sheetState?.kind {
-        case .verifyToVote, .verifyToReply:
+        case .verification:
             return true
         default:
             return false

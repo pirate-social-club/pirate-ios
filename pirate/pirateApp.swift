@@ -4,7 +4,7 @@ import UIKit
 #endif
 
 @main
-struct pirateApp: App {
+struct PirateApp: App {
     @State private var sessionManager = SessionManager()
     @State private var mediaPlaybackCoordinator = PirateMediaPlaybackCoordinator()
 
@@ -33,7 +33,7 @@ struct pirateApp: App {
     }
 }
 
-private extension pirateApp {
+private extension PirateApp {
     #if DEBUG
     static func isDebugVeryNativeURL(_ url: URL) -> Bool {
         url.scheme == "pirate" && url.host == "debug" && url.path == "/very-native"

@@ -13,8 +13,19 @@
 		ACCFF1A72FB99E71004ADAB4 /* RtcBasic in Frameworks */ = {isa = PBXBuildFile; productRef = ACCB6B4A2FB82C00009AD74C /* RtcBasic */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		ACCE10072FC1000000000007 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = ACCB6B2D2FB82B84009AD74C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ACCB6B342FB82B84009AD74C;
+			remoteInfo = pirate;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		ACCB6B352FB82B84009AD74C /* pirate.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = pirate.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		ACCE10012FC1000000000001 /* pirateTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = pirateTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -36,6 +47,11 @@
 			path = pirate;
 			sourceTree = "<group>";
 		};
+		ACCE10022FC1000000000002 /* pirateTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = pirateTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -50,6 +66,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		ACCE10042FC1000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -57,6 +80,7 @@
 			isa = PBXGroup;
 			children = (
 				ACCB6B372FB82B84009AD74C /* pirate */,
+				ACCE10022FC1000000000002 /* pirateTests */,
 				ACCB6B362FB82B84009AD74C /* Products */,
 			);
 			sourceTree = "<group>";
@@ -65,6 +89,7 @@
 			isa = PBXGroup;
 			children = (
 				ACCB6B352FB82B84009AD74C /* pirate.app */,
+				ACCE10012FC1000000000001 /* pirateTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -99,6 +124,29 @@
 			productReference = ACCB6B352FB82B84009AD74C /* pirate.app */;
 			productType = "com.apple.product-type.application";
 		};
+		ACCE10062FC1000000000006 /* pirateTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ACCE100B2FC100000000000B /* Build configuration list for PBXNativeTarget "pirateTests" */;
+			buildPhases = (
+				ACCE10032FC1000000000003 /* Sources */,
+				ACCE10042FC1000000000004 /* Frameworks */,
+				ACCE10052FC1000000000005 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				ACCE10082FC1000000000008 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				ACCE10022FC1000000000002 /* pirateTests */,
+			);
+			name = pirateTests;
+			packageProductDependencies = (
+			);
+			productName = pirateTests;
+			productReference = ACCE10012FC1000000000001 /* pirateTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -112,6 +160,10 @@
 					ACCB6B342FB82B84009AD74C = {
 						CreatedOnToolsVersion = 26.5;
 						ProvisioningStyle = Automatic;
+					};
+					ACCE10062FC1000000000006 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = ACCB6B342FB82B84009AD74C;
 					};
 				};
 			};
@@ -136,12 +188,20 @@
 			projectRoot = "";
 			targets = (
 				ACCB6B342FB82B84009AD74C /* pirate */,
+				ACCE10062FC1000000000006 /* pirateTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		ACCB6B332FB82B84009AD74C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ACCE10052FC1000000000005 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -183,7 +243,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		ACCE10032FC1000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		ACCE10082FC1000000000008 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ACCB6B342FB82B84009AD74C /* pirate */;
+			targetProxy = ACCE10072FC1000000000007 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		ACCB6B3E2FB82B85009AD74C /* Debug */ = {
@@ -392,6 +467,58 @@
 			};
 			name = Release;
 		};
+		ACCE10092FC1000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HZ282CX2Q7;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = psc.pirateTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/pirate.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/pirate";
+				TEST_TARGET_NAME = pirate;
+			};
+			name = Debug;
+		};
+		ACCE100A2FC100000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HZ282CX2Q7;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = psc.pirateTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/pirate.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/pirate";
+				TEST_TARGET_NAME = pirate;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -409,6 +536,15 @@
 			buildConfigurations = (
 				ACCB6B412FB82B85009AD74C /* Debug */,
 				ACCB6B422FB82B85009AD74C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		ACCE100B2FC100000000000B /* Build configuration list for PBXNativeTarget "pirateTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ACCE10092FC1000000000009 /* Debug */,
+				ACCE100A2FC100000000000A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

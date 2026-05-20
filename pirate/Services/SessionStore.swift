@@ -37,9 +37,8 @@ final class SessionStore {
     }
 
     var primaryWalletAddress: String? {
-        guard let attachments = currentSession?.walletAttachments else { return nil }
-        let primary = attachments.first { $0.isPrimary == true }
-        return primary?.walletAddress ?? attachments.first?.walletAddress
+        currentSession?.profile.primaryWalletAddress?.nilIfEmpty
+            ?? primaryWalletAddress(from: currentSession?.walletAttachments)
     }
 
     func set(_ session: SessionExchangeResponse) {
@@ -85,6 +84,13 @@ final class SessionStore {
         guard let json = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any],
               let exp = json["exp"] as? Double else { return false }
         return Date(timeIntervalSince1970: exp) <= Date()
+    }
+
+    private func primaryWalletAddress(from attachments: [WalletAttachmentSummary]?) -> String? {
+        guard let attachments else { return nil }
+        let primary = attachments.first { $0.isPrimary == true && $0.walletAddress.nilIfEmpty != nil }
+        return primary?.walletAddress.nilIfEmpty
+            ?? attachments.first { $0.walletAddress.nilIfEmpty != nil }?.walletAddress.nilIfEmpty
     }
 
     private func saveToKeychain(key: String, data: Data) {

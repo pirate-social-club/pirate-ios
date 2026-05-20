@@ -802,6 +802,7 @@ private struct HomeSidebarSheet: View {
                     navigationRow(label: "Chat", icon: .chatCircle, route: .chat)
                     navigationRow(label: "Notifications", icon: .bell, route: .notifications)
                     navigationRow(label: "Profile", icon: .userCircle, route: .me)
+                    navigationRow(label: "Settings", icon: .slidersHorizontal, route: .settings)
                 }
             }
             .padding(.horizontal, 20)

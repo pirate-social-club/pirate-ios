@@ -38,7 +38,7 @@ struct ChatPlaceholderView: View {
             }
             .background(colors.bgPage)
             .hiddenRootNavigationBar()
-            .task(id: "\(sessionManager.primaryWalletAddress ?? ""):\(initialTarget ?? "")") {
+            .task(id: "\(chatWalletAddress ?? ""):\(initialTarget ?? "")") {
                 await bootstrap()
                 await openInitialTargetIfNeeded()
             }
@@ -425,13 +425,19 @@ struct ChatPlaceholderView: View {
             .filter { !$0.isEmpty }
     }
 
+    private var chatWalletAddress: String? {
+        sessionManager.currentSession?.profile.primaryWalletAddress?.nilIfEmpty
+            ?? sessionManager.primaryWalletAddress?.nilIfEmpty
+    }
+
     private func bootstrap() async {
         guard sessionManager.isAuthenticated else {
             chatService.disconnect()
             return
         }
-        guard let walletAddress = sessionManager.primaryWalletAddress else {
-            errorMessage = XmtpChatServiceError.missingWalletAddress.localizedDescription
+        guard let walletAddress = chatWalletAddress else {
+            chatService.disconnect()
+            errorMessage = "Chat needs an Ethereum wallet. This account is signed in, but no wallet is linked yet."
             return
         }
 
